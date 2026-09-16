@@ -30,3 +30,7 @@ Gen-1 remains authoritative for model/provider runtime, ToolRegistry, execution 
 ## Current boundary
 
 Cycle 2 implements model-assisted planning, deterministic plan validation, permission/risk/approval policy, restart-safe approval reconciliation, independent goal evaluation, planner failure recovery, natural CLI reporting, and security acceptance tests. Background jobs, proactive events, full session continuity, connectors, voice, GUI, IoT, and robotics are deferred to later cycles.
+
+## Cycle 3 autonomy
+
+Cycle 3 adds permission-aware minimal context selection, persistent sessions, background task pause/resume/cancel/recovery with iteration budgets, and relevance-filtered proactive event records. These layers never bypass Cycle 2 policy or the Gen-1 execution boundary.

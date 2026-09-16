@@ -21,6 +21,9 @@ class Gen2Store:
             CREATE TABLE IF NOT EXISTS approvals(approval_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS criteria(criterion_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS model_provenance(request_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS sessions(session_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS background_tasks(background_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS proactive_events(event_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,goal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_events_goal ON events(goal_id,id);
             ''')
@@ -76,3 +79,25 @@ class Gen2Store:
     def events(self,gid):
         with self.connect() as db:rows=db.execute('SELECT event_type,payload,created_at FROM events WHERE goal_id=? ORDER BY id',(gid,)).fetchall()
         return [{'event_type':r[0],'payload':json.loads(r[1]),'created_at':r[2]} for r in rows]
+    def save_session(self,s):
+        with self.connect() as db:db.execute('INSERT INTO sessions VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET payload=excluded.payload',(s.session_id,self._dump(s.to_dict())))
+    def load_session(self,sid):
+        from .sessions import Session
+        with self.connect() as db:r=db.execute('SELECT payload FROM sessions WHERE session_id=?',(sid,)).fetchone()
+        if r is None:raise KeyError(sid)
+        return Session(**json.loads(r[0]))
+    def save_background_task(self,t): self._save('background_tasks','background_id',t.background_id,t.goal_id,t.to_dict())
+    def load_background_task(self,bid):
+        from .background import BackgroundTask
+        d=self._load_payload('background_tasks','background_id',bid);return BackgroundTask(**d)
+    def background_tasks(self):
+        from .background import BackgroundTask
+        with self.connect() as db:rows=db.execute('SELECT payload FROM background_tasks ORDER BY rowid').fetchall()
+        return [BackgroundTask(**json.loads(r[0])) for r in rows]
+    def save_proactive_event(self,e):
+        with self.connect() as db:db.execute('INSERT INTO proactive_events VALUES(?,?) ON CONFLICT(event_id) DO UPDATE SET payload=excluded.payload',(e.event_id,self._dump(e.to_dict())))
+    def load_proactive_event(self,eid):
+        from .proactive import ProactiveEvent
+        with self.connect() as db:r=db.execute('SELECT payload FROM proactive_events WHERE event_id=?',(eid,)).fetchone()
+        if r is None:raise KeyError(eid)
+        return ProactiveEvent(**json.loads(r[0]))

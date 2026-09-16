@@ -4,6 +4,7 @@
 
 - Cycle 1: separate repository, Gen-1 gateway, persistent Goal/Plan/TaskRun, bounded execution, verification, restart recovery.
 - Cycle 2: provider-neutral model planner boundary, structured PlanProposal, deterministic validation, persistent permission/risk/approval/criteria/provenance, approval restart reconciliation, planner recovery, independent goal evaluation, security acceptance.
+- Cycle 3: personal context selection, persistent sessions, bounded background task control, restart recovery, and relevance-filtered proactive events.
 
 ## External acceptance blocker
 
