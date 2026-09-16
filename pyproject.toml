@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.scripts]
+sparkle = "sparkle_gen2.cli:entrypoint"
 sparkle-gen2 = "sparkle_gen2.cli:entrypoint"
 
 [tool.setuptools]

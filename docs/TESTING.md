@@ -11,3 +11,8 @@ Cycle 2 acceptance covers: model-planner retry/failure, strict plan validation, 
 The cross-process acceptance test executes step 1, persists a pending approval for step 2, reconstructs `PersonalAgent` from the same SQLite database, approves, resumes, verifies step 2, evaluates criteria, and completes.
 
 Live provider acceptance is separate from deterministic tests. It is accepted only when Gen-1 reports an available configured provider and a real model response produces a valid structured proposal. Missing credentials or unavailable provider health is reported as a blocker, never replaced with mock evidence.
+
+
+## Extended acceptance
+
+The suite also covers context minimization, sessions, bounded background worker, proactive event filtering, connector scopes, external-provider fail-closed behavior, device/robot safety, experiments, controlled self-improvement, audit tamper detection, exact Gen-1 schema contracts, cancellation/deadlines/replanning, CLI aliases and trace IDs. Real isolated Gen-1 acceptance covers bounded file read, memory/knowledge/project/learning/research reads, memory-review reconciliation, engineering scaffold, Python compile verification and artifact packaging.

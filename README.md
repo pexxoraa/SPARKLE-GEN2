@@ -34,3 +34,7 @@ Cycle 2 implements model-assisted planning, deterministic plan validation, permi
 ## Cycle 3 autonomy
 
 Cycle 3 adds permission-aware minimal context selection, persistent sessions, background task pause/resume/cancel/recovery with iteration budgets, and relevance-filtered proactive event records. These layers never bypass Cycle 2 policy or the Gen-1 execution boundary.
+
+## Current acceptance status
+
+The repository now includes an executable capability matrix and acceptance harness. Core orchestration, persistence, policy, approval recovery, context, background work, proactive events, audit, local UX and Gen-1 integration are verified. Provider/account/device-dependent features fail closed and are explicitly marked external rather than simulated. See `docs/ACCEPTANCE.md`.

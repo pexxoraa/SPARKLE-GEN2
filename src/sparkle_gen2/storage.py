@@ -101,3 +101,9 @@ class Gen2Store:
         with self.connect() as db:r=db.execute('SELECT payload FROM proactive_events WHERE event_id=?',(eid,)).fetchone()
         if r is None:raise KeyError(eid)
         return ProactiveEvent(**json.loads(r[0]))
+    def clear_criteria(self,gid):
+        with self.connect() as db:db.execute('DELETE FROM criteria WHERE goal_id=?',(gid,))
+    def cancel_pending_approvals(self,gid,decision_at):
+        for approval in self.approvals_for_goal(gid):
+            if approval.status==ApprovalStatus.PENDING:
+                approval.status=ApprovalStatus.CANCELLED;approval.decision_at=decision_at;approval.approved_by='system_cancel';self.save_approval(approval)

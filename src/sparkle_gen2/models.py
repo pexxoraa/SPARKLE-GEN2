@@ -67,6 +67,7 @@ class TaskRun:
     task_run_id:str; goal_id:str; current_step:str|None; completed_steps:list[str]; failed_steps:list[str]
     pending_steps:list[str]; artifacts:list[str]; approvals:list[str]; events:list[dict[str,Any]]
     started_at:str; updated_at:str; deadline:str|None; status:str
+    trace_id:str|None=None
     def to_dict(self): return asdict(self)
 
 @dataclass(slots=True)

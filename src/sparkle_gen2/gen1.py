@@ -13,6 +13,7 @@ class Gen1Gateway(Protocol):
     def invoke(self,tool:str,arguments:dict[str,Any])->ToolObservation: ...
     def health(self)->dict[str,Any]: ...
     def plan(self,goal:dict[str,Any],context:dict[str,Any],available_capabilities:list[str])->dict[str,Any]: ...
+    def approval_status(self,approval_id:str,tool:str)->dict[str,Any]: ...
 
 class LocalGen1Gateway:
     def __init__(self,system=None):
@@ -54,6 +55,18 @@ class LocalGen1Gateway:
         raw['goal_id']=goal['goal_id']
         prov={'request_id':response.provider_request_id or uuid.uuid4().hex,'provider':decision.provider,'model':decision.model,'capability':decision.capability,'requested_capabilities':['planning','reasoning'],'selection_reason':decision.selection_reason,'health':decision.health,'trace_id':None,'fallback':decision.fallback}
         return {'proposal':raw,'provenance':prov}
+    def approval_status(self,approval_id,tool):
+        if tool!='memory_write' or not hasattr(self.system,'memory_review'):
+            return {'status':'UNKNOWN','verified':False,'reason':'unsupported_approval_type'}
+        for status in ('pending','approved','rejected'):
+            try: rows=self.system.memory_review.list(limit=100,status=status)
+            except Exception as exc:return {'status':'UNKNOWN','verified':False,'reason':type(exc).__name__}
+            for row in rows:
+                if row.get('id')==approval_id:
+                    state=row.get('status',status).upper();memory_id=row.get('memory_id')
+                    verified=state=='APPROVED' and memory_id is not None
+                    return {'status':state,'verified':verified,'memory_id':memory_id,'source':'gen1_memory_review'}
+        return {'status':'UNKNOWN','verified':False,'reason':'approval_not_found'}
     def invoke(self,tool,arguments):
         if tool not in self.system.tools.names:
             return ToolObservation(False,tool,{'error':'tool unavailable'},{'verified':False,'reason':'not_registered'})

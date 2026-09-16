@@ -1,0 +1,70 @@
+from __future__ import annotations
+from .capability_status import CapabilityMatrix,CapabilityState
+
+def build_acceptance_matrix():
+    m=CapabilityMatrix()
+    verified={
+      'personal_agent':'Cycle1/2 vertical-slice and goal tests',
+      'goal_plan_task_lifecycle':'persistent restart/retry/cancel/deadline/replan tests',
+      'plan_validation':'schema/capability/dependency/cycle/policy negative tests',
+      'permission_risk_approval':'Cycle2 policy/security acceptance',
+      'approval_reconciliation':'Gen2 restart + real Gen1 memory-review approve/reject integration',
+      'goal_evaluation':'independent success-criterion tests',
+      'session_continuity':'persistent session restart test',
+      'personal_context_engine':'minimal permission-aware context selection test',
+      'background_task_engine':'persistent pause/resume/cancel/recovery tests',
+      'background_worker':'bounded worker pass tests',
+      'proactive_event_engine':'relevance filter and notification decision tests',
+      'memory_orchestration':'real Gen1 memory proposal/review/reconciliation test',
+      'knowledge_projects_tasks_learning_research':'real Gen1 read-tool acceptance plus schema contracts',
+      'world_model_knowledge_graph':'provenance node/edge tests',
+      'deterministic_security_policy':'risk/approval/shell-denial/self-completion security tests',
+      'audit_log':'tamper-evident hash-chain test',
+      'model_manager_capability_routing':'Gen1 ModelRouter integration and health/capability filtering tests',
+      'model_failure_recovery':'planner retry/fail-closed/replan tests',
+      'typed_tool_catalog':'CapabilityDescriptor/Catalog tests',
+      'connector_manager':'least-privilege scope/health/revoke tests',
+      'files_read':'real Gen1 bounded file/engineering inspection boundary',
+      'natural_cli':'sparkle/chat alias, optional JSON/verbose, approval/resume/cancel/session tests',
+      'dashboard':'read-only local snapshot/HTML rendering test',
+      'notifications':'notification-center tests',
+      'multimodal_transport':'typed transport validation for text/image/audio/document/video/screen/camera',
+      'device_manager':'approval-gated adapter contract tests',
+      'experiment_management':'evidence-required experiment lifecycle tests',
+      'research_to_experiment':'Gen1 research contract + evidence-seeded experiment test',
+      'artifact_generation':'real isolated Gen1 scaffold + compile verification + package acceptance',
+      'advanced_coding_foundation':'real Gen1 engineering inspect/scaffold/verify/package plus approval gates',
+      'daily_operating_system':'deterministic priority brief tests',
+      'controlled_self_improvement':'tests/review/human-approval/install gate tests',
+      'self_diagnostics':'actual Gen1/connectors/storage health report tests',
+      'observability':'goal/task/trace correlation tests',
+      'rollback':'approval + independent rollback verification tests',
+    }
+    for capability,evidence in verified.items():m.set(CapabilityState(capability,'LIVE_VERIFIED',evidence))
+    blocked={
+      'live_model_planning':('Gen1 model route is UNAVAILABLE; no NVIDIA_API_KEY/SPARKLE_LLM_API_KEY','real production planner fails closed with zero tool execution'),
+      'embedding_provider':('embedding provider/configuration','retrieval runtime fails closed without embedder'),
+      'reranking_provider':('reranker provider/configuration','optional reranking harness complete'),
+      'image_generation':('image-generation provider','provider contract harness complete'),
+      'safety_model':('safety-model provider','advisory classifier harness complete; deterministic policy remains authoritative'),
+      'semantic_multimodal':('semantic image/audio/video/screen/camera provider','transport complete; semantic status never fabricated'),
+      'voice_stt_tts':('STT/TTS providers + microphone/speaker target','shared voice/text runtime and external-block harness complete'),
+      'gmail':('Google OAuth/account','least-privilege connector registered'),
+      'outlook':('Microsoft OAuth/account','least-privilege connector registered'),
+      'calendar':('calendar OAuth/account','least-privilege connector registered'),
+      'drive':('Drive OAuth/account','least-privilege connector registered'),
+      'github_connector':('GitHub authorization/token','least-privilege connector registered'),
+      'browser_control':('approved browser-control environment','bounded allowlist/control harness complete'),
+      'gui_computer_control':('approved GUI/computer-control environment','bounded control harness complete'),
+      'linux_application_control':('approved Linux application-control adapter','bounded control harness complete'),
+      'mobile':('mobile target/emulator','device connector and approval harness complete'),
+      'esp32':('ESP32 device + authenticated transport','device connector contract complete'),
+      'mqtt':('MQTT broker/device credentials','connector contract complete'),
+      'ros2_robotics':('ROS2 robot gateway + safety controller + independent e-stop','direct-motor denial/e-stop/approval harness complete'),
+      'robotics_engineer_live':('real robot/ROS2 target','mode software preserves RobotSafetyGateway'),
+      'workspace_test_execution':('dedicated disposable worker with SPARKLE_WORKSPACE_TESTS_ENABLED=true','real Gen1 explicitly refuses tests when disabled; scaffold/compile/package verified'),
+      'source_control_push':('noninteractive GitHub write authentication on host','repository remote is correct; remote reads work; pushes wait for auth'),
+    }
+    for capability,(dependency,evidence) in blocked.items():m.set(CapabilityState(capability,'EXTERNALLY_BLOCKED',evidence,dependency))
+    m.set(CapabilityState('production_deployment','DEFERRED','No deployment target/runtime was specified; repository and local runtime remain testable',limitation='deployment target selection is a human/environment decision'))
+    return m

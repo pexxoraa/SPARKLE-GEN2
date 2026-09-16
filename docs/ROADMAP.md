@@ -13,3 +13,8 @@ Live Nemotron planning requires a configured Gen-1 provider credential. The curr
 ## Next boundary after Cycle 2 live acceptance
 
 Personal Context Engine + persistent background tasks + session continuity + long-running execution + proactive event engine.
+
+
+## Terminal classification
+
+All currently declared roadmap surfaces are tracked in `default_acceptance.py`. Software-completable core surfaces are verified; account/provider/device-dependent surfaces are externally blocked; production deployment is deferred pending target selection. Future work should move an external capability to LIVE_VERIFIED only after genuine provider/account/device acceptance.
