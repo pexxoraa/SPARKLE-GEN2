@@ -34,6 +34,9 @@ class Gen2Store:
             CREATE TABLE IF NOT EXISTS proactive_events(event_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS world_nodes(node_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS world_edges(edge_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS notifications(notification_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS improvement_candidates(candidate_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS semantic_documents(document_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,goal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_events_goal ON events(goal_id,id);
             ''')
@@ -125,6 +128,12 @@ class Gen2Store:
         return ProactiveEvent(**json.loads(r[0]))
     def clear_criteria(self,gid):
         with self.connect() as db:db.execute('DELETE FROM criteria WHERE goal_id=?',(gid,))
+    def recent_goals(self,limit=10):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM goals ORDER BY rowid DESC LIMIT ?',(max(1,min(int(limit),100)),)).fetchall()
+        return [json.loads(r[0]) for r in rows]
+    def recent_events(self,limit=20):
+        with self.connect() as db:rows=db.execute('SELECT goal_id,event_type,payload,created_at FROM events ORDER BY id DESC LIMIT ?',(max(1,min(int(limit),200)),)).fetchall()
+        return [{'goal_id':r[0],'event_type':r[1],'payload':json.loads(r[2]),'created_at':r[3]} for r in rows]
     def cancel_pending_approvals(self,gid,decision_at):
         for approval in self.approvals_for_goal(gid):
             if approval.status==ApprovalStatus.PENDING:
@@ -139,4 +148,21 @@ class Gen2Store:
         with self.connect() as db:db.execute('INSERT INTO world_edges VALUES(?,?) ON CONFLICT(edge_id) DO UPDATE SET payload=excluded.payload',(edge.edge_id,self._dump(edge.to_dict())))
     def world_edges(self):
         with self.connect() as db:rows=db.execute('SELECT payload FROM world_edges ORDER BY rowid').fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def save_notification(self,n):
+        with self.connect() as db:db.execute('INSERT INTO notifications VALUES(?,?) ON CONFLICT(notification_id) DO UPDATE SET payload=excluded.payload',(n.notification_id,self._dump(n.to_dict())))
+    def notifications(self):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM notifications ORDER BY rowid').fetchall()
+        return [json.loads(r[0]) for r in rows]
+    def save_improvement_candidate(self,c):
+        with self.connect() as db:db.execute('INSERT INTO improvement_candidates VALUES(?,?) ON CONFLICT(candidate_id) DO UPDATE SET payload=excluded.payload',(c.candidate_id,self._dump(c.to_dict())))
+    def improvement_candidates(self):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM improvement_candidates ORDER BY rowid').fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def save_semantic_document(self,document_id,payload):
+        with self.connect() as db:db.execute('INSERT INTO semantic_documents VALUES(?,?) ON CONFLICT(document_id) DO UPDATE SET payload=excluded.payload',(document_id,self._dump(payload)))
+    def semantic_documents(self):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM semantic_documents ORDER BY rowid').fetchall()
         return [json.loads(r[0]) for r in rows]

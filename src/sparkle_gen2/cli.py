@@ -2,25 +2,33 @@ from __future__ import annotations
 import argparse,json,os,sys
 from pathlib import Path
 from .core import PersonalAgent
+from .connector_catalog import build_default_connectors
+from .context_sources import PersonalContextAssembler
+from .devices import DeviceManager
 from .gen1 import LocalGen1Gateway
 from .sessions import SessionService
+from .personal_data import PersonalDataOrchestrator
+from .world_model import WorldModel
 from .storage import Gen2Store
 
 def data_path()->Path:
     return Path(os.environ.get('SPARKLE_GEN2_DB',Path.home()/'.local'/'share'/'sparkle-gen2'/'gen2.sqlite3'))
 def build_components():
-    store=Gen2Store(data_path());return store,PersonalAgent(store,LocalGen1Gateway()),SessionService(store)
+    store=Gen2Store(data_path());gen1=LocalGen1Gateway();context=PersonalContextAssembler(personal_data=PersonalDataOrchestrator(gen1),connectors=build_default_connectors(),store=store,devices=DeviceManager(),world=WorldModel(store))
+    return store,PersonalAgent(store,gen1,context_provider=context),SessionService(store)
 def normalize_request(parts):
     values=list(parts)
     if values and values[0]=='chat':values=values[1:]
     return ' '.join(values).strip()
 def format_result(result,verbose=False):
-    lines=[]
-    if verbose:
-        for item in result.get('verified',[]):lines.append(f'✓ {item}')
-        if result.get('approvals'):lines.append(f"→ Approval required: {result['approvals'][-1]}")
-        if result.get('gen1_approvals'):lines.append(f"→ Gen-1 approval required: {result['gen1_approvals'][-1]}")
-        if result.get('trace_id'):lines.append(f"Trace: {result['trace_id']}")
+    if not verbose:return result['text']
+    lines=[];checked=list(result.get('checked',[]));completed=list(result.get('verified',[]));approvals=list(result.get('approvals',[]));gen1=list(result.get('gen1_approvals',[]))
+    if checked:lines.append('I checked:');lines.extend(f'• {x}' for x in checked)
+    if completed:lines.append('I completed:');lines.extend(f'• {x}' for x in completed)
+    if approvals or gen1:
+        lines.append('I need approval for:');lines.extend(f'• Gen-2 approval {x}' for x in approvals);lines.extend(f'• Gen-1 approval {x}' for x in gen1)
+    if result.get('status') not in {'COMPLETED','CANCELLED'}:lines.extend(['Next:','• resume verified remaining work when its gate is satisfied'])
+    if result.get('trace_id'):lines.append(f"Trace: {result['trace_id']}")
     lines.append(result['text']);return '\n'.join(lines)
 def entrypoint(argv=None):
     p=argparse.ArgumentParser(prog='sparkle')

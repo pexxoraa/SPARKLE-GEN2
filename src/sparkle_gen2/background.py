@@ -24,6 +24,12 @@ class BackgroundTaskService:
         if not 1<=max_iterations<=1000: raise ValueError('max_iterations out of range')
         if not 0.001<=float(time_budget_seconds)<=86400: raise ValueError('time_budget_seconds out of range')
         t=BackgroundTask(uuid.uuid4().hex,goal_id,'QUEUED',now(),now(),max_iterations,0,None,float(time_budget_seconds),0.0);self.store.save_background_task(t);return t
+    def inspect(self,bid):return self.store.load_background_task(bid)
+    def recover(self,bid):return self.store.load_background_task(bid)
+    def retry(self,bid):
+        t=self.store.load_background_task(bid)
+        if t.state not in {'BLOCKED','FAILED','WAITING','WAITING_FOR_APPROVAL','PAUSED'}:raise ValueError('task is not retryable')
+        t.state='QUEUED';t.last_error=None;t.updated_at=now();self.store.save_background_task(t);return t
     def pause(self,bid):
         t=self.store.load_background_task(bid)
         if t.state not in TERMINAL:t.state='PAUSED';t.updated_at=now();self.store.save_background_task(t)

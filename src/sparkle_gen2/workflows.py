@@ -11,7 +11,10 @@ class Gen1Workflow:
         return {'tool':tool,'output':obs.output,'verification':obs.verification}
     def research(self,project,report=False):return self._call('research_workspace',{'project':project,'report':bool(report)})
     def inspect_code(self,path):return self._call('engineering_inspect',{'operation':'file','path':path})
-    def scaffold(self,name,files,*,approved=False):return self._call('workspace_scaffold',{'project_name':name,'files':dict(files),'approved':True},approved=approved,write=True)
+    def scaffold(self,name,files,*,approved=False,overwrite=False):
+        args={'project_name':name,'files':dict(files),'approved':True}
+        if overwrite:args['overwrite']=True
+        return self._call('workspace_scaffold',args,approved=approved,write=True)
     def verify_workspace(self,name,checks,*,approved=False):return self._call('workspace_verify',{'project_name':name,'checks':list(checks),'approved':True},approved=approved,write=True)
     def test_workspace(self,name,*,approved=False):return self._call('workspace_test',{'project_name':name,'approved':True},approved=approved,write=True)
     def package_artifact(self,name,*,approved=False):return self._call('workspace_package',{'project_name':name,'approved':True},approved=approved,write=True)

@@ -4,6 +4,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from .core_time import now
 
+ENTITY_KINDS={'person','project','document','task','email','meeting','decision','device','robot','experiment','location','event','resource'}
+RELATION_TYPES={'contains','depends_on','assigned_to','owns','mentions','scheduled_with','produced_by','related_to','controls','uses','belongs_to','references'}
+
 @dataclass(slots=True)
 class WorldNode:
     node_id:str
@@ -32,6 +35,7 @@ class WorldModel:
         self.edges=[WorldEdge(**d) for d in self.store.world_edges()]
     def observe(self,node_id,kind,state,provenance=None):
         if not node_id or not kind:raise ValueError('node identity and kind required')
+        if kind not in ENTITY_KINDS:raise ValueError('unsupported world entity kind')
         provenance=dict(provenance or {'source':'unknown'})
         n=WorldNode(node_id,kind,dict(state),now(),provenance);self.nodes[node_id]=n
         if self.store is not None:self.store.save_world_node(n)
@@ -39,6 +43,7 @@ class WorldModel:
     def relate(self,source,relation,target,provenance=None):
         if source not in self.nodes or target not in self.nodes: raise KeyError('unknown node')
         if not relation:raise ValueError('relation required')
+        if relation not in RELATION_TYPES:raise ValueError('unsupported world relation type')
         e=WorldEdge(uuid.uuid4().hex,source,relation,target,now(),dict(provenance or {'source':'derived'}));self.edges.append(e)
         if self.store is not None:self.store.save_world_edge(e)
         return e

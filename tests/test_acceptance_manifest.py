@@ -11,8 +11,9 @@ class AcceptanceManifestTests(unittest.TestCase):
             if item['status']=='DEFERRED':self.assertTrue(item['limitation'])
     def test_external_dependencies_are_not_claimed_live(self):
         states={x['capability']:x for x in build_acceptance_matrix().summary()}
-        for name in ('live_model_planning','voice_stt_tts','gmail','browser_control','mobile','ros2_robotics','source_control_push'):
+        for name in ('live_model_planning','voice_stt_tts','gmail','mobile','ros2_robotics','source_control_push'):
             self.assertEqual(states[name]['status'],'EXTERNALLY_BLOCKED');self.assertTrue(states[name]['dependency'])
+        self.assertEqual(states['browser_control']['status'],'LIVE_VERIFIED');self.assertIn('HTTP 200',states['browser_control']['evidence'])
     def test_core_security_and_persistence_are_verified(self):
         states={x['capability']:x['status'] for x in build_acceptance_matrix().summary()}
         for name in ('approval_reconciliation','goal_evaluation','background_task_engine','audit_log','deterministic_security_policy'):

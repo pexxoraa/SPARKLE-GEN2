@@ -12,17 +12,22 @@ from .storage import Gen2Store
 from .validation import PlanValidationError,PlanValidator
 
 class PersonalAgent:
-    def __init__(self,store:Gen2Store,gen1:Gen1Gateway,*,planner:PlannerModel|None=None,policy:PolicyEngine|None=None,max_iterations:int=12,planner_retries:int=1):
+    def __init__(self,store:Gen2Store,gen1:Gen1Gateway,*,planner:PlannerModel|None=None,policy:PolicyEngine|None=None,context_provider=None,max_iterations:int=12,planner_retries:int=1):
         if not 1<=max_iterations<=100:raise ValueError('max_iterations out of range')
         if not 0<=planner_retries<=2:raise ValueError('planner_retries out of range')
-        self.store=store;self.gen1=gen1;self.planner=planner or Gen1PlannerModel(gen1);self.policy=policy or PolicyEngine();self.failures=FailureClassifier();self.max_iterations=max_iterations;self.planner_retries=planner_retries
+        self.store=store;self.gen1=gen1;self.planner=planner or Gen1PlannerModel(gen1);self.policy=policy or PolicyEngine();self.context_provider=context_provider;self.failures=FailureClassifier();self.max_iterations=max_iterations;self.planner_retries=planner_retries
     def _goal(self,request):
         stamp=now();return Goal(uuid.uuid4().hex,request.strip(),' '.join(request.strip().split()),success_criteria=[],context_requirements=['relevant Gen-1 context'],created_at=stamp,updated_at=stamp,status=GoalStatus.CREATED)
     def start(self,request):
         if not isinstance(request,str) or not request.strip():raise ValueError('request is required')
         goal=self._goal(request);self.store.save_goal(goal);self.store.event(goal.goal_id,'goal_created',{},now())
         goal.status=GoalStatus.UNDERSTANDING;goal.updated_at=now();self.store.save_goal(goal)
-        context=self.gen1.retrieve_context(request,goal.context_requirements);health=self.gen1.health();capabilities=list(health.get('tools',[]))
+        context=self.gen1.retrieve_context(request,goal.context_requirements)
+        if self.context_provider is not None:
+            try:
+                richer=self.context_provider.gather(request);context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
+            except Exception as exc:self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
+        health=self.gen1.health();capabilities=list(health.get('tools',[]))
         minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'deadline':goal.deadline,'constraints':goal.constraints}
         self.store.event(goal.goal_id,'context_retrieved',{'source':minimal['source'],'capability_count':len(capabilities)},now())
         last_error=None
@@ -55,8 +60,12 @@ class PersonalAgent:
         goal=self.store.load_goal(goal_id);old_plan=self.store.load_plan(goal.plan_id);old_run=self.store.load_task_run_for_goal(goal_id)
         if goal.status not in {GoalStatus.WAITING,GoalStatus.BLOCKED,GoalStatus.FAILED}:raise ValueError('goal is not eligible for replanning')
         if any(a.status==ApprovalStatus.PENDING for a in self.store.approvals_for_goal(goal_id)):raise ValueError('pending approvals must be resolved before replanning')
-        context=self.gen1.retrieve_context(goal.user_request,goal.context_requirements);capabilities=list(self.gen1.health().get('tools',[]))
-        minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'deadline':goal.deadline,'constraints':goal.constraints}
+        context=self.gen1.retrieve_context(goal.user_request,goal.context_requirements)
+        if self.context_provider is not None:
+            try:
+                richer=self.context_provider.gather(goal.user_request);context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
+            except Exception as exc:self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
+        capabilities=list(self.gen1.health().get('tools',[]));minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'deadline':goal.deadline,'constraints':goal.constraints}
         proposal,provenance=self.planner.propose(goal,minimal,capabilities);validator=PlanValidator(set(capabilities),self.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
         self.store.save_plan_proposal(proposal);self.store.save_provenance(goal_id,provenance)
         for permission,risk in decisions:self.store.save_permission(goal_id,permission);self.store.save_risk(goal_id,risk)

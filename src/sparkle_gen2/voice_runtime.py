@@ -14,6 +14,11 @@ class VoiceRuntime:
         if target==self.active_turn:self.active_turn=None
         return {'turn_id':target,'interrupted':bool(target)}
     def is_interrupted(self,turn_id):return turn_id in self._interrupted
+    def cancel(self,turn_id=None):
+        result=self.interrupt(turn_id);result['cancelled']=result.pop('interrupted');return result
+    def resume(self,turn_id=None):
+        if turn_id is not None:self._interrupted.discard(turn_id)
+        return self.begin_turn()
     def transcribe(self,audio):
         if self.stt is None: raise RuntimeError('external_dependency:stt')
         text=self.stt(audio)
