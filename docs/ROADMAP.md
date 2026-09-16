@@ -1,11 +1,14 @@
 # Roadmap
 
-Next implementation boundary:
+## Completed foundation
 
-1. capability-routed planning through Gen-1's existing model/provider interface, using Nemotron when healthy;
-2. typed permission, risk, and approval objects with approval-status reconciliation;
-3. richer context ranking and plan-level success-criteria evaluation;
-4. durable background TaskRun worker with pause/resume/cancel/recover;
-5. regression tests for authorization, cancellation, provenance, and audit continuity.
+- Cycle 1: separate repository, Gen-1 gateway, persistent Goal/Plan/TaskRun, bounded execution, verification, restart recovery.
+- Cycle 2: provider-neutral model planner boundary, structured PlanProposal, deterministic validation, persistent permission/risk/approval/criteria/provenance, approval restart reconciliation, planner recovery, independent goal evaluation, security acceptance.
 
-External connectors, voice, multimodal, GUI, IoT, ROS 2, and robotics remain later slices as required by the delivery order.
+## External acceptance blocker
+
+Live Nemotron planning requires a configured Gen-1 provider credential. The current host reports the Nemotron route unavailable and has no live credential configured, so live-provider acceptance remains open. Mocked evidence is not substituted.
+
+## Next boundary after Cycle 2 live acceptance
+
+Personal Context Engine + persistent background tasks + session continuity + long-running execution + proactive event engine.

@@ -2,27 +2,31 @@
 
 SPARKLE Gen-2 is a separate personal-agent application built on the certified SPARKLE Gen-1 platform. It does not copy, replace, or silently modify Gen-1.
 
-## Implemented first vertical slice
+## Cycle 2 architecture
 
-`user request → Goal → Gen-1 context → persistent Plan/TaskRun → typed Gen-1 tool → observation → verification → persisted state → natural response`
+`user goal → bounded Gen-1 context → model plan proposal → deterministic validation → Gen-2 policy/risk/approval → exact Gen-1 tool → independent observation/verification → goal criteria → natural response`
 
-Implemented now: `PersonalAgent`, explicit goal/step lifecycle, SQLite persistence, bounded continuation, retry without false completion, restart recovery, a narrow `Gen1Gateway`, fail-closed unknown tools, Gen-1 `skill_search` integration for the Python-learning scenario, approval-preserving Gen-1 memory proposals, and a natural CLI. JSON is opt-in with `--json`.
+Production planning uses `Gen1PlannerModel`, which asks Gen-1's provider-neutral `ModelRouter` for the supported `reasoning` capability while recording that the planner operation requires `planning + reasoning`. Gen-2 never hard-codes Nemotron; actual provider/model provenance is persisted.
+
+Model output is only a proposal. It cannot grant permission, approve actions, execute tools, change risk policy, verify its own effects, or declare a goal complete.
 
 ## Run
 
 Gen-1 must be importable. During development:
 
 ```bash
-export PYTHONPATH=/path/to/SPARKLE-GEN2/src:/path/to/SPARKLE/src
+export PYTHONPATH=/home/prem-macharla/SPARKLE-GEN2/src:/home/prem-macharla/SPARKLE-level3-git/src
 python -m sparkle_gen2.cli "Organize my Python learning for this week"
 ```
 
-Resume persisted work with `--resume GOAL_ID`.
+Use `--json` for structured diagnostics and `--verbose` for concise progress. Resume with `--resume GOAL_ID`. Resolve a Gen-2 approval with `--approve APPROVAL_ID` or `--reject APPROVAL_ID`.
 
-## Security boundary
+## Persistence and security
 
-Gen-2 owns orchestration state only. Gen-1 remains authoritative for tools, memory/knowledge, model/provider infrastructure, authorization, execution restrictions, and audit/security controls. The local adapter invokes only tools registered in Gen-1 and passes an exact allowed-tool set. Unknown capabilities fail closed.
+Gen-2 persists goals, plan proposals, validated plans, task runs, permissions, risk evaluations, approvals, success criteria, model provenance, and lifecycle events in its own SQLite store. Approval and execution state survive process restart.
+
+Gen-1 remains authoritative for model/provider runtime, ToolRegistry, execution boundaries, worker isolation, security, cancellation, and Gen-1 authorization. Capability resolution is exact: unsupported capabilities fail closed and are never silently substituted.
 
 ## Current boundary
 
-This cycle deliberately does not implement external connectors, background workers, model-generated planning, voice, GUI, IoT, or robotics. Unsupported goals stay unresolved rather than being declared complete.
+Cycle 2 implements model-assisted planning, deterministic plan validation, permission/risk/approval policy, restart-safe approval reconciliation, independent goal evaluation, planner failure recovery, natural CLI reporting, and security acceptance tests. Background jobs, proactive events, full session continuity, connectors, voice, GUI, IoT, and robotics are deferred to later cycles.

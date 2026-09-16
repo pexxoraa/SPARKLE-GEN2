@@ -2,17 +2,21 @@
 
 ## Dependency boundary
 
-`PersonalAgent` depends on the `Gen1Gateway` protocol. The current `LocalGen1Gateway` consumes the supported `SparkleSystem.context` and `SparkleSystem.tools` surfaces. Gen-2 does not copy Gen-1 stores, auth, providers, workers, or tool implementations.
+`PersonalAgent` depends on `Gen1Gateway`. `LocalGen1Gateway` consumes Gen-1 `SparkleSystem.context`, `SparkleSystem.model_router`, and `SparkleSystem.tools`; it does not copy provider adapters, ToolRegistry, stores, workers, authentication, or secrets.
 
-## First slice flow
+## Cycle 2 trusted pipeline
 
-1. Create and persist a Goal.
-2. Retrieve bounded relevant context through Gen-1.
-3. Create and persist a Plan and TaskRun.
-4. Select one typed Gen-1 tool from a conservative deterministic planner.
-5. Execute through Gen-1's ToolRegistry with an exact allow-set.
-6. Observe and verify the result.
-7. Persist VERIFIED, WAITING, or BLOCKED state.
-8. Return a human-readable response.
+1. Persist Goal and retrieve bounded relevant Gen-1 context.
+2. `PlannerModel` requests a provider-neutral planning operation over Gen-1's supported reasoning route.
+3. Persist strict `PlanProposal` and actual model/provider provenance.
+4. `PlanValidator` checks schema, step IDs, dependencies/cycles, capabilities, criteria, timeout/retry bounds, and unresolved questions.
+5. `PolicyEngine` deterministically produces persistent Permission and RiskEvaluation objects.
+6. State-changing capabilities require persistent user Approval before execution.
+7. Capability resolves exactly to a registered Gen-1 tool and executes through Gen-1 ToolRegistry with an exact allow-set.
+8. Gen-1 observation is independently verified; model assertions are not verification evidence.
+9. `GoalSuccessCriterion` objects are evaluated by deterministic methods, including persisted-plan and verified-step evidence.
+10. Goal completion requires every executable step VERIFIED and every required criterion SATISFIED.
 
-Completion is only possible when every plan step is VERIFIED. A failed or unavailable tool never becomes success.
+## Model authority boundary
+
+The model may propose steps, dependencies, capabilities, arguments, and candidate success criteria. It cannot mutate policy, grant permissions, approve actions, invoke tools directly, mark verification true, or set final completion state.

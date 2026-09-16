@@ -1,7 +1,13 @@
 # Testing
 
-The first-cycle suite uses Python standard-library `unittest` so it does not add test dependencies to Gen-1.
+Run the Gen-2 suite with Gen-1 importable:
 
-Coverage includes successful state change plus re-read verification through a fake typed gateway, induced failure without false completion, retry while the goal remains alive, persisted restart recovery, live Gen-1 calculator boundary execution, and fail-closed rejection of an arbitrary-shell capability.
+```bash
+PYTHONPATH=src:/home/prem-macharla/SPARKLE-level3-git/src python3 -m unittest discover -s tests -v
+```
 
-Live acceptance also exercises Gen-1 `skill_search` for the Python-learning scenario in an isolated `SPARKLE_DATA_DIR` and confirms an unsupported request remains unresolved.
+Cycle 2 acceptance covers: model-planner retry/failure, strict plan validation, duplicate IDs, dependency cycles, unresolved questions, unknown/shell capabilities, exact Gen-1 tool boundary, approval persistence, restart reconciliation, approve/reject behavior, multi-step retry, independent goal criteria, model risk-downgrade rejection, and model self-completion rejection.
+
+The cross-process acceptance test executes step 1, persists a pending approval for step 2, reconstructs `PersonalAgent` from the same SQLite database, approves, resumes, verifies step 2, evaluates criteria, and completes.
+
+Live provider acceptance is separate from deterministic tests. It is accepted only when Gen-1 reports an available configured provider and a real model response produces a valid structured proposal. Missing credentials or unavailable provider health is reported as a blocker, never replaced with mock evidence.
