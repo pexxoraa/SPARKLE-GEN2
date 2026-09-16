@@ -1,3 +1,3 @@
 # Multimodal
 
-Transport validation exists for text, image, audio, document, video, screen and camera inputs. Transport support is not semantic-understanding evidence. Semantic status becomes `LIVE_VERIFIED` only when an actual provider has processed the modality; current semantic providers are externally blocked.
+SPARKLE validates bounded text/image/audio/document/video/screen/camera transport independently from semantic understanding. This Nemotron-only release registers a text-only Nemotron model, so semantic image/audio/video/screen/camera reasoning is `EXTERNALLY_BLOCKED`. The PWA does not send images to a secondary vision model. Artifact and file provenance may still be stored and shared without claiming semantic interpretation.

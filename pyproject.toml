@@ -13,9 +13,14 @@ dependencies = []
 [project.scripts]
 sparkle = "sparkle_gen2.cli:entrypoint"
 sparkle-gen2 = "sparkle_gen2.cli:entrypoint"
+sparkle-personal-core = "sparkle_gen2.personal_core:entrypoint"
+sparkle-background-worker = "sparkle_gen2.background_worker_cli:entrypoint"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sparkle_gen2 = ["*.json", "web/*.html", "web/*.css", "web/*.js", "web/*.json", "web/*.png"]

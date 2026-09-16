@@ -20,7 +20,14 @@ class LocalGen1Gateway:
     def __init__(self,system=None):
         if system is None:
             from sparkle.system import SparkleSystem
-            system=SparkleSystem()
+            from sparkle.registry import ModelRegistry
+            registry=ModelRegistry(path=Path(__file__).with_name('nemotron_models.json'))
+            if len(registry._records)!=1:
+                raise RuntimeError('nemotron_only_registry_violation')
+            only=next(iter(registry._records.values()))
+            if only.provider!='nvidia' or 'nemotron' not in only.model_id.lower() or not only.enabled:
+                raise RuntimeError('nemotron_only_registry_violation')
+            system=SparkleSystem(model_registry=registry)
         self.system=system
     def health(self):
         models=[]
@@ -51,6 +58,8 @@ class LocalGen1Gateway:
         )
         request=ModelRequest(messages=[Message(role='user',content=prompt)],system='You are SPARKLE Gen-2 planner. Produce strict JSON only.',max_output_tokens=2200,temperature=0.2,thinking=True,metadata={'operation':'gen2_plan','required_capabilities':['planning','reasoning']})
         decision,response=self.system.model_router.complete(request,'reasoning',modalities={'text'},latency_policy='deep',max_timeout_seconds=120)
+        if decision.provider!='nvidia' or 'nemotron' not in decision.model.lower() or decision.fallback:
+            raise RuntimeError('nemotron_only_route_violation')
         text=response.text.strip()
         try: raw=json.loads(text)
         except json.JSONDecodeError as exc: raise RuntimeError('planner_invalid_json') from exc
@@ -70,6 +79,18 @@ class LocalGen1Gateway:
                     verified=state=='APPROVED' and memory_id is not None
                     return {'status':state,'verified':verified,'memory_id':memory_id,'source':'gen1_memory_review'}
         return {'status':'UNKNOWN','verified':False,'reason':'approval_not_found'}
+    def artifacts(self,limit=50):
+        return self.system.artifacts.list(limit=max(1,min(int(limit),100)))
+    def artifact_content(self,artifact_id):
+        import hashlib
+        if type(artifact_id) is not int or artifact_id<1:raise ValueError('invalid_artifact_id')
+        row=next((r for r in self.system.artifacts.list(limit=100) if r.get('artifact_id')==artifact_id),None)
+        if row is None:raise KeyError(artifact_id)
+        root=self.system.artifacts.artifact_root.resolve();target=(root/str(row['artifact_name'])).resolve()
+        if root not in target.parents or not target.is_file() or target.is_symlink():raise RuntimeError('artifact_path_invalid')
+        content=target.read_bytes();digest=hashlib.sha256(content).hexdigest()
+        if digest!=row.get('artifact_sha256'):raise RuntimeError('artifact_digest_mismatch')
+        return {'artifact_id':artifact_id,'name':target.name,'sha256':digest,'content':content}
     def invoke(self,tool,arguments):
         if tool not in self.system.tools.names:
             return ToolObservation(False,tool,{'error':'tool unavailable'},{'verified':False,'reason':'not_registered'})

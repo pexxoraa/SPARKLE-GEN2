@@ -15,8 +15,9 @@ READ_CAPABILITIES={
     'content_search',
     'automation_inspect',
     'calculator',
+    'ros2_sim_status',
 }
-WRITE_CAPABILITIES={'memory_write','workspace_scaffold','workspace_verify','workspace_package','workspace_test','agent_install'}
+WRITE_CAPABILITIES={'ros2_sim_move','memory_write','workspace_scaffold','workspace_verify','workspace_package','workspace_test','agent_install'}
 
 class PolicyEngine:
     def evaluate(self,capability:str,subject:str,scope:str,timestamp:str)->tuple[Permission,RiskEvaluation]:

@@ -38,6 +38,11 @@ class Gen2Store:
             CREATE TABLE IF NOT EXISTS improvement_candidates(candidate_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS semantic_documents(document_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS experiments(experiment_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS device_identities(device_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS device_tokens(token_hash TEXT PRIMARY KEY,device_id TEXT NOT NULL,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS enrollment_codes(code_hash TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS conversation_messages(message_id TEXT PRIMARY KEY,session_id TEXT NOT NULL,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS personal_settings(setting_key TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,goal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_events_goal ON events(goal_id,id);
             ''')
@@ -133,8 +138,8 @@ class Gen2Store:
         with self.connect() as db:rows=db.execute('SELECT payload FROM goals ORDER BY rowid DESC LIMIT ?',(max(1,min(int(limit),100)),)).fetchall()
         return [json.loads(r[0]) for r in rows]
     def recent_events(self,limit=20):
-        with self.connect() as db:rows=db.execute('SELECT goal_id,event_type,payload,created_at FROM events ORDER BY id DESC LIMIT ?',(max(1,min(int(limit),200)),)).fetchall()
-        return [{'goal_id':r[0],'event_type':r[1],'payload':json.loads(r[2]),'created_at':r[3]} for r in rows]
+        with self.connect() as db:rows=db.execute('SELECT id,goal_id,event_type,payload,created_at FROM events ORDER BY id DESC LIMIT ?',(max(1,min(int(limit),200)),)).fetchall()
+        return [{'event_id':r[0],'goal_id':r[1],'event_type':r[2],'payload':json.loads(r[3]),'created_at':r[4]} for r in rows]
     def cancel_pending_approvals(self,gid,decision_at):
         for approval in self.approvals_for_goal(gid):
             if approval.status==ApprovalStatus.PENDING:
@@ -173,3 +178,46 @@ class Gen2Store:
     def experiments(self):
         with self.connect() as db:rows=db.execute('SELECT payload FROM experiments ORDER BY rowid').fetchall()
         return [json.loads(r[0]) for r in rows]
+    def save_device_identity(self,device_id,payload):
+        with self.connect() as db:db.execute('INSERT INTO device_identities VALUES(?,?) ON CONFLICT(device_id) DO UPDATE SET payload=excluded.payload',(device_id,self._dump(payload)))
+    def device_identities(self):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM device_identities ORDER BY rowid').fetchall()
+        return [json.loads(r[0]) for r in rows]
+    def save_device_token(self,token_hash,device_id,payload):
+        with self.connect() as db:db.execute('INSERT INTO device_tokens VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET device_id=excluded.device_id,payload=excluded.payload',(token_hash,device_id,self._dump(payload)))
+    def load_device_token(self,token_hash):
+        with self.connect() as db:r=db.execute('SELECT device_id,payload FROM device_tokens WHERE token_hash=?',(token_hash,)).fetchone()
+        if r is None:raise KeyError(token_hash)
+        return r[0],json.loads(r[1])
+    def delete_device_tokens(self,device_id):
+        with self.connect() as db:db.execute('DELETE FROM device_tokens WHERE device_id=?',(device_id,))
+    def save_enrollment_code(self,code_hash,payload):
+        with self.connect() as db:db.execute('INSERT INTO enrollment_codes VALUES(?,?) ON CONFLICT(code_hash) DO UPDATE SET payload=excluded.payload',(code_hash,self._dump(payload)))
+    def load_enrollment_code(self,code_hash):
+        with self.connect() as db:r=db.execute('SELECT payload FROM enrollment_codes WHERE code_hash=?',(code_hash,)).fetchone()
+        if r is None:raise KeyError(code_hash)
+        return json.loads(r[0])
+    def delete_enrollment_code(self,code_hash):
+        with self.connect() as db:db.execute('DELETE FROM enrollment_codes WHERE code_hash=?',(code_hash,))
+    def save_conversation_message(self,message_id,session_id,payload):
+        with self.connect() as db:db.execute('INSERT INTO conversation_messages VALUES(?,?,?) ON CONFLICT(message_id) DO UPDATE SET payload=excluded.payload',(message_id,session_id,self._dump(payload)))
+    def conversation_messages(self,session_id,limit=100):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM conversation_messages WHERE session_id=? ORDER BY rowid DESC LIMIT ?',(session_id,max(1,min(int(limit),500)))).fetchall()
+        return [json.loads(r[0]) for r in reversed(rows)]
+    def all_approvals(self):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM approvals ORDER BY rowid DESC').fetchall()
+        out=[]
+        for r in rows:
+            d=json.loads(r[0]);d['risk']=RiskLevel(d['risk']);d['status']=ApprovalStatus(d['status']);out.append(Approval(**d))
+        return out
+    def all_task_runs(self,limit=100):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM task_runs ORDER BY rowid DESC LIMIT ?',(max(1,min(int(limit),500)),)).fetchall()
+        return [json.loads(r[0]) for r in rows]
+    def all_sessions(self,limit=100):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM sessions ORDER BY rowid DESC LIMIT ?',(max(1,min(int(limit),500)),)).fetchall()
+        return [json.loads(r[0]) for r in rows]
+    def save_setting(self,key,payload):
+        with self.connect() as db:db.execute('INSERT INTO personal_settings VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET payload=excluded.payload',(key,self._dump(payload)))
+    def load_setting(self,key,default=None):
+        with self.connect() as db:r=db.execute('SELECT payload FROM personal_settings WHERE setting_key=?',(key,)).fetchone()
+        return default if r is None else json.loads(r[0])

@@ -8,7 +8,7 @@ PersonalAgent lifecycle, planning validation, deterministic policy, permission/a
 
 ## Externally blocked
 
-Live model planning; embedding/reranking/image/safety-model providers; semantic multimodal providers; STT/TTS; Gmail/Outlook/Calendar/Drive/GitHub account authorization; GUI/Linux control targets; mobile; ESP32/MQTT; ROS2/robot hardware; dedicated Gen-1 workspace-test worker; and noninteractive GitHub push authentication. Each has a software harness and an explicit dependency.
+Live Nemotron planning (credential unavailable); Nemotron embedding/neural-reranking/semantic-multimodal operations not exposed by the configured text model; image generation; Nemotron advisory safety while credential unavailable; STT/TTS; Gmail/Outlook/Calendar/Drive/GitHub account authorization; GUI/Linux control targets; mobile; ESP32/MQTT; ROS2/robot hardware; dedicated Gen-1 workspace-test worker; and noninteractive GitHub push authentication. Each has a software harness and an explicit dependency.
 
 ## Deferred
 

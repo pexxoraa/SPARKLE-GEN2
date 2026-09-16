@@ -1,0 +1,47 @@
+{
+  "active_model": "nvidia-nemotron-3.5-lightning",
+  "models": [
+    {
+      "id": "nvidia-nemotron-3.5-lightning",
+      "provider": "nvidia",
+      "model_id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+      "adapter": "nvidia_chat_completions",
+      "roles": [
+        "general",
+        "reasoning",
+        "coding",
+        "tool_use"
+      ],
+      "modalities": [
+        "text"
+      ],
+      "enabled": true,
+      "context_window": 1000000,
+      "max_output_tokens": 16384,
+      "temperature": 1.0,
+      "thinking": true,
+      "reasoning_budget": 8192,
+      "supports_streaming": true,
+      "supports_tools": true,
+      "allow_fallback": false,
+      "latency_class": "fast",
+      "base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "secret_refs": [
+        "NVIDIA_API_KEY",
+        "SPARKLE_LLM_API_KEY"
+      ],
+      "timeout_seconds": 120,
+      "retry": {
+        "attempts": 3,
+        "base_delay_seconds": 0.5
+      }
+    }
+  ],
+  "routing": {
+    "default": "nvidia-nemotron-3.5-lightning",
+    "general": "nvidia-nemotron-3.5-lightning",
+    "reasoning": "nvidia-nemotron-3.5-lightning",
+    "coding": "nvidia-nemotron-3.5-lightning",
+    "tool_use": "nvidia-nemotron-3.5-lightning"
+  }
+}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090d18">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="SPARKLE — private personal AI workspace">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/app.css">
+  <title>SPARKLE</title>
+</head>
+<body>
+  <div id="pair-screen" class="pair-screen hidden" aria-live="polite">
+    <section class="pair-card glass">
+      <div class="brand-mark" aria-hidden="true">✦</div>
+      <p class="eyebrow">PRIVATE PERSONAL AI</p>
+      <h1>Connect this device to SPARKLE</h1>
+      <p class="muted">Enter the temporary pairing code created by your Personal Core. The code is single-use and expires automatically.</p>
+      <form id="pair-form">
+        <label>Pairing code<input id="pair-code" autocomplete="one-time-code" placeholder="AB12-CD34-EF56" required></label>
+        <label>Device name<input id="pair-name" maxlength="80" placeholder="My laptop" required></label>
+        <div class="two-col">
+          <label>Device type<select id="pair-kind"><option>laptop</option><option>desktop</option><option>phone</option><option>tablet</option><option>workstation</option></select></label>
+          <label>Operating system<input id="pair-os" maxlength="80" required></label>
+        </div>
+        <button class="primary wide" type="submit">Connect securely</button>
+        <p id="pair-error" class="error" role="alert"></p>
+      </form>
+    </section>
+  </div>
+
+  <div id="app" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark small">✦</span><span>SPARKLE</span></div>
+      <nav id="nav" aria-label="Primary">
+        <button data-view="home" class="nav-item active"><span>◈</span>Home</button>
+        <button data-view="chat" class="nav-item"><span>◌</span>Conversation</button>
+        <button data-view="tasks" class="nav-item"><span>✓</span>Tasks</button>
+        <button data-view="approvals" class="nav-item"><span>◇</span>Approvals <b id="approval-badge" class="badge hidden">0</b></button>
+        <button data-view="devices" class="nav-item"><span>⌁</span>Devices</button>
+        <button data-view="artifacts" class="nav-item"><span>▱</span>Artifacts</button>
+        <button data-view="notifications" class="nav-item"><span>○</span>Notifications <b id="notification-badge" class="badge hidden">0</b></button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="status-dot online"></div><span id="core-status">Personal Core online</span>
+        <button id="forget-device" class="text-button">Disconnect this device</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button id="menu-button" class="icon-button mobile-only" aria-label="Open navigation">☰</button>
+        <div><p id="view-eyebrow" class="eyebrow">PERSONAL WORKSPACE</p><h2 id="view-title">Home</h2></div>
+        <div class="top-actions"><span id="device-pill" class="pill">This device</span><button id="refresh" class="icon-button" aria-label="Refresh">↻</button></div>
+      </header>
+
+      <section id="view-home" class="view active">
+        <div class="hero glass">
+          <div><p id="greeting" class="eyebrow">GOOD EVENING</p><h1>What should we work on?</h1><p class="muted">One private assistant. Shared context. Verified actions across your devices.</p></div>
+          <div class="orb" aria-hidden="true"><span></span></div>
+          <form id="hero-form" class="composer compact"><textarea id="hero-input" rows="1" placeholder="Ask SPARKLE anything…" required></textarea><button type="submit" class="send" aria-label="Send">➤</button></form>
+        </div>
+        <div class="section-heading"><div><p class="eyebrow">RIGHT NOW</p><h3>Active work</h3></div><button class="text-button" data-jump="tasks">View all</button></div>
+        <div id="active-work" class="task-grid"></div>
+        <div class="dashboard-grid">
+          <article class="glass panel"><div class="panel-title"><span>◇</span><h3>Approvals</h3></div><div id="home-approvals"></div></article>
+          <article class="glass panel"><div class="panel-title"><span>⌁</span><h3>Devices</h3></div><div id="home-devices"></div></article>
+          <article class="glass panel wide-panel"><div class="panel-title"><span>○</span><h3>Recent notifications</h3></div><div id="home-notifications"></div></article>
+        </div>
+      </section>
+
+      <section id="view-chat" class="view chat-view">
+        <div class="chat-toolbar"><select id="session-picker" aria-label="Conversation session"></select><button id="new-session" class="secondary">New conversation</button></div>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <div id="activity" class="activity hidden"><span class="pulse"></span><span id="activity-text">Planning…</span></div>
+        <form id="chat-form" class="composer"><textarea id="chat-input" rows="1" placeholder="Message SPARKLE…"></textarea><button type="button" class="tool-button" title="Image semantic analysis is unavailable in this Nemotron-only text release" disabled>▱</button><button type="button" class="tool-button" title="Voice becomes available when a real STT/TTS path is connected">◉</button><button type="submit" class="send" aria-label="Send">➤</button></form>
+      </section>
+
+      <section id="view-tasks" class="view"><div class="view-header"><div><h3>Task control center</h3><p class="muted">Plan, execute, verify, recover.</p></div><div class="filter-row"><button class="chip active" data-task-filter="all">All</button><button class="chip" data-task-filter="active">Active</button><button class="chip" data-task-filter="waiting">Waiting</button><button class="chip" data-task-filter="complete">Complete</button></div></div><div id="task-list" class="stack"></div></section>
+      <section id="view-approvals" class="view"><div class="view-header"><div><h3>Approval center</h3><p class="muted">Actions stay bound to task, scope, risk, and time.</p></div></div><div id="approval-list" class="stack"></div></section>
+      <section id="view-devices" class="view"><div class="view-header"><div><h3>My devices</h3><p class="muted">Authorized endpoints for shared sessions and bounded local capabilities.</p></div><label class="autonomy-control">Autonomy <select id="autonomy-mode"><option value="MANUAL">Manual</option><option value="APPROVAL_REQUIRED">Approval required</option><option value="TRUSTED_ACTIONS">Trusted actions</option><option value="LIMITED_AUTONOMOUS">Limited autonomous</option></select></label></div><div id="device-list" class="device-grid"></div></section>
+      <section id="view-artifacts" class="view"><div class="view-header"><div><h3>Artifact workspace</h3><p class="muted">Verified generated packages and outputs with provenance and integrity digests.</p></div></div><div id="artifact-list" class="stack"></div></section>
+      <section id="view-notifications" class="view"><div class="view-header"><div><h3>Notifications</h3><p class="muted">Important progress, approvals, failures, and device events.</p></div></div><div id="notification-list" class="stack"></div></section>
+    </main>
+  </div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

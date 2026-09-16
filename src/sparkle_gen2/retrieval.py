@@ -45,3 +45,32 @@ class PersistentSemanticIndex:
     def context_items(self,query,*,k=5):
         from .context_engine import ContextItem
         return [ContextItem('semantic',d['id'],d['text'],1.0,max(0.0,min(1.0,float(d.get('vector_score',0)))), 'ALLOW',{'document_id':d['id'],'metadata':d.get('metadata',{})}) for d in self.search(query,k=k)]
+
+class DeterministicRetrievalRuntime:
+    """Model-free lexical retrieval using BM25-style term weighting plus deterministic metadata/freshness boosts."""
+    def __init__(self,*,k1=1.5,b=0.75):
+        self.k1=float(k1);self.b=float(b)
+    @staticmethod
+    def _tokens(text):
+        import re
+        return re.findall(r"[a-z0-9]+",str(text).lower())
+    def retrieve(self,query,documents,k=5):
+        import math
+        if not 1<=int(k)<=100:raise ValueError('k out of range')
+        docs=list(documents);qt=self._tokens(query)
+        if not docs or not qt:return docs[:k]
+        toks=[self._tokens(d.get('text','')) for d in docs];avg=sum(map(len,toks))/max(1,len(toks))
+        df={t:sum(t in set(x) for x in toks) for t in set(qt)}
+        scored=[]
+        for d,dt in zip(docs,toks):
+            score=0.0
+            for t in qt:
+                f=dt.count(t)
+                if not f:continue
+                idf=math.log(1+(len(docs)-df[t]+0.5)/(df[t]+0.5))
+                denom=f+self.k1*(1-self.b+self.b*len(dt)/max(avg,1e-9))
+                score+=idf*(f*(self.k1+1))/denom
+            meta=d.get('metadata') or {}
+            score+=0.05*sum(1 for t in qt if t in self._tokens(' '.join(map(str,meta.values()))))
+            scored.append((score,str(d.get('id','')),d))
+        scored.sort(key=lambda x:(-x[0],x[1]));return [d|{'deterministic_score':score} for score,_,d in scored[:k]]

@@ -80,6 +80,16 @@ class PersonalAgent:
             seen.add(key);self.store.save_criterion(GoalSuccessCriterion(uuid.uuid4().hex,goal_id,c['description'],c['verification_method'],CriterionStatus.PENDING,{}))
         run=TaskRun(uuid.uuid4().hex,goal_id,None,[],[],[x.step_id for x in plan.steps],[],[],[],now(),now(),goal.deadline,'RUNNING',uuid.uuid4().hex);self.store.save_task_run(run);self.store.save_goal(goal);self.store.event(goal_id,'replanned',{'old_plan_id':old_plan.plan_id,'new_plan_id':plan.plan_id},now())
         return self.resume(goal_id)
+    def continue_goal(self,goal_id,instruction):
+        if not isinstance(instruction,str) or not instruction.strip():raise ValueError('continuation instruction required')
+        goal=self.store.load_goal(goal_id)
+        if any(a.status==ApprovalStatus.PENDING for a in self.store.approvals_for_goal(goal_id)):raise ValueError('pending approvals must be resolved before continuation')
+        original=goal.user_request;goal.user_request=(original+'\nContinuation: '+instruction.strip())[:12000];goal.status=GoalStatus.WAITING;self.store.save_goal(goal);self.store.event(goal_id,'goal_continuation_requested',{'previous_status':'COMPLETED' if self.store.load_task_run_for_goal(goal_id).status=='COMPLETED' else 'NONTERMINAL'},now())
+        try:return self.replan(goal_id)
+        except (PlannerError,PlanValidationError,RuntimeError,ValueError) as exc:
+            goal=self.store.load_goal(goal_id);goal.status=GoalStatus.WAITING;self.store.save_goal(goal);self.store.event(goal_id,'continuation_planning_failed',{'error_type':type(exc).__name__},now())
+            run=self.store.load_task_run_for_goal(goal_id);return {'goal_id':goal_id,'task_run_id':run.task_run_id,'trace_id':run.trace_id,'status':'WAITING','text':f'Continuation is saved, but planning is unavailable: {exc}. No tools were executed.','checked':[],'verified':[],'approvals':[],'gen1_approvals':[],'model_provenance':self.store.provenance_for_goal(goal_id),'criteria':[c.to_dict() for c in self.store.criteria_for_goal(goal_id)]}
+
     def _approval_for(self,goal_id,step_id):
         items=[a for a in self.store.approvals_for_goal(goal_id) if a.step_id==step_id and a.status in {ApprovalStatus.PENDING,ApprovalStatus.APPROVED,ApprovalStatus.REJECTED}]
         return items[-1] if items else None
@@ -182,10 +192,19 @@ class PersonalAgent:
     def report(self,goal,plan,run):
         checked=[s.preferred_tool for s in plan.steps if s.result];verified=[s.description for s in plan.steps if s.status==StepStatus.VERIFIED]
         pending=[a for a in self.store.approvals_for_goal(goal.goal_id) if a.status==ApprovalStatus.PENDING]
-        if goal.status==GoalStatus.COMPLETED:text='Completed. Every required step and goal-level success criterion was independently verified.'
-        elif pending:text=f'Waiting for your approval before continuing: {pending[-1].approval_id}.'
-        elif goal.status==GoalStatus.BLOCKED:text='Blocked. I did not mark the goal complete because policy, execution, or verification remains unresolved.'
-        else:text='Work is not complete yet. Verified progress is persisted and can be resumed.'
+        summaries=[]
+        for step in plan.steps:
+            if step.status!=StepStatus.VERIFIED or not isinstance(step.result,dict):continue
+            output=step.result.get('output')
+            if step.preferred_tool=='calculator' and isinstance(output,dict) and 'value' in output:summaries.append(f"The verified result is {output['value']}.")
+            elif step.preferred_tool=='ros2_sim_status' and isinstance(output,dict):
+                pose=output.get('pose',{});summaries.append(f"The simulation is at x {float(pose.get('x',0)):.2f}, y {float(pose.get('y',0)):.2f}.")
+            elif step.preferred_tool=='ros2_sim_move' and isinstance(output,dict):
+                pose=output.get('after',{});summaries.append(f"The simulation move completed and was independently verified at x {float(pose.get('x',0)):.2f}, y {float(pose.get('y',0)):.2f}.")
+        if goal.status==GoalStatus.COMPLETED:text='Completed and independently verified.'+(' '+ ' '.join(summaries) if summaries else '')
+        elif pending:text=f"I’m ready to {pending[-1].action.lower()}. This action requires your approval before I continue."
+        elif goal.status==GoalStatus.BLOCKED:text='I’m blocked because policy, execution, or verification is unresolved. I did not mark the work complete.'
+        else:text='Work is still in progress. Verified progress is saved and can be resumed from any authorized device.'
         gen1_approvals=[]
         if run.status=='WAITING_FOR_GEN1_APPROVAL':
             for step in plan.steps:

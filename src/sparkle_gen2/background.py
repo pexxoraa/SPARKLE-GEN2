@@ -19,7 +19,7 @@ class BackgroundTask:
     def to_dict(self): return asdict(self)
 
 class BackgroundTaskService:
-    def __init__(self,store,agent_factory,*,clock=None): self.store=store;self.agent_factory=agent_factory;self.clock=clock or time.monotonic
+    def __init__(self,store,agent_factory,*,clock=None,notifier=None): self.store=store;self.agent_factory=agent_factory;self.clock=clock or time.monotonic;self.notifier=notifier
     def create(self,goal_id,max_iterations=100,time_budget_seconds=300):
         if not 1<=max_iterations<=1000: raise ValueError('max_iterations out of range')
         if not 0.001<=float(time_budget_seconds)<=86400: raise ValueError('time_budget_seconds out of range')
@@ -51,4 +51,8 @@ class BackgroundTaskService:
             if result['status']=='WAITING':t.state='WAITING';break
         if t.elapsed_seconds>=t.time_budget_seconds and t.state=='RUNNING':t.state='PAUSED';t.last_error='time_budget_exhausted'
         elif t.iterations>=t.max_iterations and t.state=='RUNNING':t.state='PAUSED';t.last_error='iteration_budget_exhausted'
-        self.store.save_background_task(t);return t
+        self.store.save_background_task(t)
+        if self.notifier is not None:
+            if t.state=='COMPLETED':self.notifier.create('background','Background task complete','SPARKLE finished approved background work.','NORMAL')
+            elif t.state in {'FAILED','BLOCKED'}:self.notifier.create('background','Background task needs attention',f'Background work stopped with state {t.state}.','HIGH')
+        return t

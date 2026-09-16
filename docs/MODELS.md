@@ -1,7 +1,9 @@
 # Models
 
-Gen-2 requests capabilities, not model names. Production planning uses Gen-1 ModelRouter and records provider/model/capability/health/selection reason/request identifiers. Current live model execution is externally blocked because the host exposes no NVIDIA/SPARKLE model credential and Gen-1 reports the configured route unavailable. The planner fails closed with zero tool execution.
+SPARKLE Gen-2 retains the provider-neutral Gen-1 model abstraction, but the release product registry contains exactly one enabled AI record: NVIDIA Nemotron 3.5 Lightning (`nvidia/nemotron-3.5-lightning-30b-a3b`). `allow_fallback` is false and Gen-2 rejects any non-NVIDIA, non-Nemotron or fallback routing decision.
 
-Embedding, reranking, image generation and advisory safety-model runtimes have complete provider contracts but remain externally blocked until providers are configured.
+Nemotron is the only model permitted for conversation/planning/reasoning/coding/tool-use operations supported by its text interface. Deterministic policy, permissions, approvals, e-stop and independent verification remain authoritative and cannot be overridden by model output.
 
-Semantic retrieval software includes a persistent vector index, optional reranker, bounded context conversion, and labeled MRR/recall evaluation. Embedding and reranking providers themselves remain externally blocked until configured. Image artifacts carry provider/time/goal/project/task provenance while image generation remains externally blocked without a provider.
+If neither `NVIDIA_API_KEY` nor the provider-neutral `SPARKLE_LLM_API_KEY` is available, model-backed work enters a recoverable waiting/degraded state and executes no tool. It never switches to another model.
+
+Embedding-specific retrieval and neural reranking are externally blocked because the configured Nemotron text model does not expose those operations. Normal local retrieval uses deterministic lexical/BM25-style ranking, metadata, provenance and structured knowledge traversal; it is not described as embeddings or neural reranking. The configured Nemotron record is text-only, so semantic image/audio/video understanding is also externally blocked.
