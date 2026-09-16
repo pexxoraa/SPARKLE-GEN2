@@ -1,7 +1,7 @@
 from __future__ import annotations
 from .capability_status import CapabilityMatrix,CapabilityState
 
-def build_acceptance_matrix():
+def build_acceptance_matrix(runtime_evidence_path=None):
     m=CapabilityMatrix()
     verified={
       'personal_agent':'Cycle1/2 vertical-slice and goal tests',
@@ -90,4 +90,13 @@ def build_acceptance_matrix():
     }
     for capability,(dependency,evidence) in blocked.items():m.set(CapabilityState(capability,'EXTERNALLY_BLOCKED',evidence,dependency))
     m.set(CapabilityState('production_deployment','DEFERRED','No deployment target/runtime was specified; repository and local runtime remain testable',limitation='deployment target selection is a human/environment decision'))
+    if runtime_evidence_path is not None:
+        from .activation_evidence import load_activation_evidence
+        for capability,record in load_activation_evidence(runtime_evidence_path).items():
+            if capability not in m.items or record.get('status') not in {'LIVE_VERIFIED','EXTERNALLY_BLOCKED','DEFERRED'}:continue
+            details=[record.get('evidence','')]
+            for key in ('provider','environment','test_id','timestamp','failure_reason'):
+                if record.get(key):details.append(f"{key}={record[key]}")
+            dependency=None if record['status']=='LIVE_VERIFIED' else m.items[capability].dependency
+            m.set(CapabilityState(capability,record['status'],'; '.join(details),dependency,m.items[capability].limitation))
     return m

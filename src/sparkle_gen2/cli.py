@@ -10,12 +10,15 @@ from .sessions import SessionService
 from .personal_data import PersonalDataOrchestrator
 from .world_model import WorldModel
 from .storage import Gen2Store
+from .provider_planners import load_planner_config
 
 def data_path()->Path:
     return Path(os.environ.get('SPARKLE_GEN2_DB',Path.home()/'.local'/'share'/'sparkle-gen2'/'gen2.sqlite3'))
 def build_components():
     store=Gen2Store(data_path());gen1=LocalGen1Gateway();context=PersonalContextAssembler(personal_data=PersonalDataOrchestrator(gen1),connectors=build_default_connectors(),store=store,devices=DeviceManager(),world=WorldModel(store))
-    return store,PersonalAgent(store,gen1,context_provider=context),SessionService(store)
+    config=Path(os.environ.get('SPARKLE_GEN2_PLANNER_CONFIG',Path.home()/'.config'/'sparkle-gen2'/'planner.json'))
+    planner=load_planner_config(config) if config.exists() else None
+    return store,PersonalAgent(store,gen1,planner=planner,context_provider=context),SessionService(store)
 def normalize_request(parts):
     values=list(parts)
     if values and values[0]=='chat':values=values[1:]

@@ -2,7 +2,20 @@ from __future__ import annotations
 import uuid
 from .models import Permission,PermissionEffect,PermissionStatus,RiskEvaluation,RiskLevel
 
-READ_CAPABILITIES={'skill_search','knowledge_search','knowledge_verify','project_search','project_tasks','learning_progress','research_workspace','engineering_inspect','content_search','automation_inspect','calculator'}
+READ_CAPABILITIES={
+    'memory_search',
+    'skill_search',
+    'knowledge_search',
+    'knowledge_verify',
+    'project_search',
+    'project_tasks',
+    'learning_progress',
+    'research_workspace',
+    'engineering_inspect',
+    'content_search',
+    'automation_inspect',
+    'calculator',
+}
 WRITE_CAPABILITIES={'memory_write','workspace_scaffold','workspace_verify','workspace_package','workspace_test','agent_install'}
 
 class PolicyEngine:

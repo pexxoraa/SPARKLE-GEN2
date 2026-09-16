@@ -28,7 +28,8 @@ class PersonalAgent:
                 richer=self.context_provider.gather(request);context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
             except Exception as exc:self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
         health=self.gen1.health();capabilities=list(health.get('tools',[]))
-        minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'deadline':goal.deadline,'constraints':goal.constraints}
+        schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities}
+        minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
         self.store.event(goal.goal_id,'context_retrieved',{'source':minimal['source'],'capability_count':len(capabilities)},now())
         last_error=None
         for attempt in range(self.planner_retries+1):
@@ -65,7 +66,7 @@ class PersonalAgent:
             try:
                 richer=self.context_provider.gather(goal.user_request);context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
             except Exception as exc:self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
-        capabilities=list(self.gen1.health().get('tools',[]));minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'deadline':goal.deadline,'constraints':goal.constraints}
+        health=self.gen1.health();capabilities=list(health.get('tools',[]));schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities};minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
         proposal,provenance=self.planner.propose(goal,minimal,capabilities);validator=PlanValidator(set(capabilities),self.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
         self.store.save_plan_proposal(proposal);self.store.save_provenance(goal_id,provenance)
         for permission,risk in decisions:self.store.save_permission(goal_id,permission);self.store.save_risk(goal_id,risk)

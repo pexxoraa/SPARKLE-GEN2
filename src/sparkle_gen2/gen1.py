@@ -27,7 +27,8 @@ class LocalGen1Gateway:
         for rid,record in self.system.models._records.items():
             models.append({'record_id':rid,'provider':record.provider,'model':record.model_id,'roles':sorted(record.roles),'enabled':record.enabled,'health':self.system.models.health.status(rid)['state']})
         agents=self.system.agents.list() if hasattr(self.system,'agents') else []
-        return {'available':True,'tools':sorted(self.system.tools.names),'models':models,'agents':agents,'boundary':'SparkleSystem/ToolRegistry'}
+        definitions=[{'name':d.name,'description':d.description,'parameters':d.parameters} for d in self.system.tools.definitions()]
+        return {'available':True,'tools':sorted(self.system.tools.names),'tool_definitions':definitions,'models':models,'agents':agents,'boundary':'SparkleSystem/ToolRegistry'}
     def retrieve_context(self,request,requirements):
         bundle=self.system.context.build(request)
         return {'requirements':list(requirements),'rendered':bundle.render()[:6000],'source':'gen1-context'}
