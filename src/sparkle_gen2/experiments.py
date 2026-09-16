@@ -11,20 +11,26 @@ class Experiment:
     results:dict=field(default_factory=dict);metrics:dict=field(default_factory=dict);conclusion:str|None=None
     def to_dict(self):return asdict(self)
 class ExperimentManager:
-    def __init__(self):self.items={}
+    def __init__(self,store=None):
+        self.store=store;self.items={}
+        if store is not None:
+            self.items={d['experiment_id']:Experiment(**d) for d in store.experiments()}
+    def _save(self,e):
+        if self.store is not None:self.store.save_experiment(e)
+        return e
     def create(self,hypothesis,method,*,configuration=None,dataset=None,code_version=None,model=None,project_id=None,research_id=None):
         if not hypothesis.strip() or not method.strip():raise ValueError('hypothesis and method required')
-        e=Experiment(uuid.uuid4().hex,hypothesis,method,'PLANNED',now(),dict(configuration or {}),dataset,code_version,model,project_id,research_id);self.items[e.experiment_id]=e;return e
+        e=Experiment(uuid.uuid4().hex,hypothesis,method,'PLANNED',now(),dict(configuration or {}),dataset,code_version,model,project_id,research_id);self.items[e.experiment_id]=e;return self._save(e)
     def observe(self,eid,evidence):
         e=self.items[eid]
         if e.status in {'COMPLETED','CANCELLED'}:raise ValueError('experiment closed')
-        e.status='RUNNING';e.observations.append(dict(evidence));return e
+        e.status='RUNNING';e.observations.append(dict(evidence));return self._save(e)
     def record_result(self,eid,results,metrics=None):
         e=self.items[eid]
         if e.status in {'COMPLETED','CANCELLED'}:raise ValueError('experiment closed')
-        e.status='RUNNING';e.results=dict(results);e.metrics=dict(metrics or {});return e
+        e.status='RUNNING';e.results=dict(results);e.metrics=dict(metrics or {});return self._save(e)
     def conclude(self,eid,conclusion):
         e=self.items[eid]
         if not e.observations and not e.results:raise ValueError('evidence required')
         if not str(conclusion).strip():raise ValueError('conclusion required')
-        e.conclusion=str(conclusion);e.status='COMPLETED';return e
+        e.conclusion=str(conclusion);e.status='COMPLETED';return self._save(e)

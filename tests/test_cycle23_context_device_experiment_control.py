@@ -38,6 +38,10 @@ class Cycle23Tests(unittest.TestCase):
     def test_experiment_tracks_configuration_dataset_code_model_results_metrics_and_links(self):
         m=ExperimentManager();e=m.create('h','m',configuration={'lr':.1},dataset='d1',code_version='abc',model='m1',project_id='p1',research_id='r1');m.record_result(e.experiment_id,{'score':.9},{'accuracy':.9});m.conclude(e.experiment_id,'supported')
         self.assertEqual(e.status,'COMPLETED');self.assertEqual(e.metrics['accuracy'],.9);self.assertEqual(e.project_id,'p1')
+    def test_experiment_state_persists_across_restart(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'x.db';m=ExperimentManager(Gen2Store(path));e=m.create('h','m',project_id='p');m.observe(e.experiment_id,{'evidence':'observed'});m.record_result(e.experiment_id,{'score':.8},{'accuracy':.8});m.conclude(e.experiment_id,'supported')
+            recovered=ExperimentManager(Gen2Store(path)).items[e.experiment_id];self.assertEqual(recovered.status,'COMPLETED');self.assertEqual(recovered.metrics['accuracy'],.8);self.assertEqual(recovered.project_id,'p')
     def test_image_artifact_has_goal_project_task_provenance(self):
         r=ImageGenerationRuntime(ImageProvider()).generate('diagram',goal_id='g',project_id='p',task_id='t');self.assertEqual(r['provenance']['goal_id'],'g');self.assertEqual(r['provenance']['provider'],'image-test')
     def test_control_workflow_observes_before_after_and_requires_verification(self):

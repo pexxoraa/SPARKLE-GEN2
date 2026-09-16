@@ -37,6 +37,7 @@ class Gen2Store:
             CREATE TABLE IF NOT EXISTS notifications(notification_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS improvement_candidates(candidate_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS semantic_documents(document_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS experiments(experiment_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,goal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_events_goal ON events(goal_id,id);
             ''')
@@ -165,4 +166,10 @@ class Gen2Store:
         with self.connect() as db:db.execute('INSERT INTO semantic_documents VALUES(?,?) ON CONFLICT(document_id) DO UPDATE SET payload=excluded.payload',(document_id,self._dump(payload)))
     def semantic_documents(self):
         with self.connect() as db:rows=db.execute('SELECT payload FROM semantic_documents ORDER BY rowid').fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def save_experiment(self,e):
+        with self.connect() as db:db.execute('INSERT INTO experiments VALUES(?,?) ON CONFLICT(experiment_id) DO UPDATE SET payload=excluded.payload',(e.experiment_id,self._dump(e.to_dict())))
+    def experiments(self):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM experiments ORDER BY rowid').fetchall()
         return [json.loads(r[0]) for r in rows]

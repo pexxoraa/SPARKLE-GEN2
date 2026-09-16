@@ -24,8 +24,8 @@ class Cycle25Tests(unittest.TestCase):
     def test_engineering_loop_requires_approval_before_write(self):
         w=Workflow();r=SoftwareEngineeringAgent(w).run('app',{'a':'b'},[],approved=False);self.assertEqual(r['status'],'WAITING_FOR_APPROVAL');self.assertEqual(w.calls,['inspect'])
     def test_research_experiment_waits_for_approval_then_records_verified_results(self):
-        p=ResearchExperimentPipeline(Gen1(),executor);wait=p.run('r1',['method-a','method-b'],'hyp','method',approved=False);self.assertEqual(wait['status'],'WAITING_FOR_APPROVAL')
-        done=p.run('r1',['method-a','method-b'],'hyp','method',approved=True,project_id='p1',code_version='abc',model='m',dataset='d');self.assertEqual(done['status'],'COMPLETE');self.assertEqual(done['analysis']['metrics']['accuracy'],.91);self.assertEqual(done['documentation']['verification']['method'],'isolated worker')
+        p=ResearchExperimentPipeline(Gen1(),executor);wait=p.run('r1',['method-a','method-b'],'hyp','method',approved=False,project_id='p1',code_version='abc',model='m',dataset='d');self.assertEqual(wait['status'],'WAITING_FOR_APPROVAL')
+        eid=wait['experiment']['experiment_id'];done=p.run('r1',[],'hyp','method',approved=True,experiment_id=eid);self.assertEqual(done['status'],'COMPLETE');self.assertEqual(done['experiment']['experiment_id'],eid);self.assertEqual(len(p.experiments.items),1);self.assertEqual(done['analysis']['metrics']['accuracy'],.91);self.assertEqual(done['documentation']['verification']['method'],'isolated worker')
     def test_research_experiment_blocks_unverified_execution(self):
         p=ResearchExperimentPipeline(Gen1(),lambda s:{'verification':{'verified':False}});r=p.run('r1',['m'],'h','method',approved=True);self.assertEqual(r['status'],'BLOCKED')
 if __name__=='__main__':unittest.main()

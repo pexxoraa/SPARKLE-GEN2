@@ -47,7 +47,7 @@ def build_acceptance_matrix():
       'device_safety_contract':'typed device metadata/capabilities preserve policy gate, deny raw GPIO/undeclared actions and require adapter state verification',
       'mqtt_transport_software':'topic-allowlisted MQTT read/publish adapter with broker health and independent verification contract',
       'ros2_gateway_software':'allowlisted ROS2 adapter requires independent safety-controller authorization/e-stop and post-action state verification',
-      'experiment_management':'evidence-required experiment lifecycle includes configuration/dataset/code/model/results/metrics/project/research links',
+      'experiment_management':'restart-safe evidence-required experiment lifecycle includes configuration/dataset/code/model/results/metrics/project/research links',
       'research_to_experiment':'bounded research comparison -> candidate -> approval -> verified experiment execution -> metrics/analysis/documentation pipeline',
       'artifact_generation':'real isolated Gen1 scaffold + compile verification + package acceptance',
       'image_artifact_provenance':'image-generation software attaches provider/time/goal/project/task provenance without claiming provider live',

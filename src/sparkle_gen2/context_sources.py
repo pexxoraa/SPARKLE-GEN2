@@ -34,7 +34,7 @@ class PersonalContextAssembler:
             items=[]
             for d in self.devices.discover():
                 try:detail=self.devices.health(d['device_id'])
-                except Exception:detail={'status':'UNKNOWN'}
+                except Exception:detail={'status':'UNAVAILABLE','verified':False}
                 items.append(self._item('devices',d['device_id'],{'record':d,'health':detail},{'device_id':d['device_id']}))
             if items:sources['devices']=items
         if self.semantic_index is not None:
