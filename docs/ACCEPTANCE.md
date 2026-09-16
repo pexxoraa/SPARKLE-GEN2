@@ -4,7 +4,7 @@ The executable source of truth is `build_acceptance_matrix()` in `default_accept
 
 ## Verified software/core
 
-PersonalAgent lifecycle, planning validation, deterministic policy, approvals, real Gen-1 approval reconciliation, goal evaluation, context selection, persistence/restart, sessions, bounded background execution, proactive filtering, Gen-1 personal-data reads, audit, model routing/failure recovery, connector manager, natural CLI, local dashboard, notifications, world model/graph, experiments, rollback, controlled self-improvement and real isolated Gen-1 scaffold/compile/package are verified.
+PersonalAgent lifecycle, planning validation, deterministic policy, approvals, real Gen-1 approval reconciliation, goal evaluation, context selection, persistence/restart, sessions, bounded background execution, proactive filtering, Gen-1 personal-data reads, audit, model routing/failure recovery, connector manager, natural CLI, local dashboard, notifications, restart-safe world model/graph, verified cross-domain completion, bounded autonomous engineering orchestration, experiments, rollback, controlled self-improvement and real isolated Gen-1 scaffold/compile/package are verified.
 
 ## Externally blocked
 

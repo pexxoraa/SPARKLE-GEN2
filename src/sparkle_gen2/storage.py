@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json,sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from .models import *
@@ -7,8 +8,15 @@ from .models import *
 class Gen2Store:
     def __init__(self,path:str|Path):
         self.path=Path(path); self.path.parent.mkdir(parents=True,exist_ok=True); self._init()
+    @contextmanager
     def connect(self):
-        db=sqlite3.connect(self.path); db.row_factory=sqlite3.Row; return db
+        db=sqlite3.connect(self.path);db.row_factory=sqlite3.Row
+        try:
+            yield db;db.commit()
+        except Exception:
+            db.rollback();raise
+        finally:
+            db.close()
     def _init(self):
         with self.connect() as db:
             db.executescript('''
@@ -24,6 +32,8 @@ class Gen2Store:
             CREATE TABLE IF NOT EXISTS sessions(session_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS background_tasks(background_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS proactive_events(event_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS world_nodes(node_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS world_edges(edge_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY AUTOINCREMENT,goal_id TEXT NOT NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,created_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_events_goal ON events(goal_id,id);
             ''')
@@ -53,7 +63,19 @@ class Gen2Store:
         if r is None:raise KeyError(gid)
         return TaskRun(**json.loads(r[0]))
     def save_permission(self,gid,p): self._save('permissions','permission_id',p.permission_id,gid,p.to_dict())
+    def permissions_for_goal(self,gid):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM permissions WHERE goal_id=? ORDER BY rowid',(gid,)).fetchall()
+        out=[]
+        for r in rows:
+            d=json.loads(r[0]);d['effect']=PermissionEffect(d['effect']);d['status']=PermissionStatus(d['status']);out.append(Permission(**d))
+        return out
     def save_risk(self,gid,r): self._save('risks','risk_id',r.risk_id,gid,r.to_dict())
+    def risks_for_goal(self,gid):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM risks WHERE goal_id=? ORDER BY rowid',(gid,)).fetchall()
+        out=[]
+        for r in rows:
+            d=json.loads(r[0]);d['level']=RiskLevel(d['level']);out.append(RiskEvaluation(**d))
+        return out
     def save_approval(self,a): self._save('approvals','approval_id',a.approval_id,a.goal_id,a.to_dict())
     def load_approval(self,aid):
         d=self._load_payload('approvals','approval_id',aid);d['risk']=RiskLevel(d['risk']);d['status']=ApprovalStatus(d['status']);return Approval(**d)
@@ -107,3 +129,14 @@ class Gen2Store:
         for approval in self.approvals_for_goal(gid):
             if approval.status==ApprovalStatus.PENDING:
                 approval.status=ApprovalStatus.CANCELLED;approval.decision_at=decision_at;approval.approved_by='system_cancel';self.save_approval(approval)
+
+    def save_world_node(self,node):
+        with self.connect() as db:db.execute('INSERT INTO world_nodes VALUES(?,?) ON CONFLICT(node_id) DO UPDATE SET payload=excluded.payload',(node.node_id,self._dump(node.to_dict())))
+    def world_nodes(self):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM world_nodes ORDER BY rowid').fetchall()
+        return [json.loads(r[0]) for r in rows]
+    def save_world_edge(self,edge):
+        with self.connect() as db:db.execute('INSERT INTO world_edges VALUES(?,?) ON CONFLICT(edge_id) DO UPDATE SET payload=excluded.payload',(edge.edge_id,self._dump(edge.to_dict())))
+    def world_edges(self):
+        with self.connect() as db:rows=db.execute('SELECT payload FROM world_edges ORDER BY rowid').fetchall()
+        return [json.loads(r[0]) for r in rows]

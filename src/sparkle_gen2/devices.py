@@ -19,6 +19,7 @@ class DeviceManager:
     def register(self,r):
         if r.device_id in self.records:raise ValueError('duplicate device')
         self.records[r.device_id]=r
+    def discover(self):return [self.records[k].public_dict() for k in sorted(self.records)]
     def health(self,device_id):
         r=self.records[device_id]
         if r.adapter is None:return {'status':'EXTERNALLY_BLOCKED','dependency':r.external_dependency}

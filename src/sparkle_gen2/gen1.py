@@ -1,5 +1,6 @@
 from __future__ import annotations
-import json,uuid
+import hashlib,json,uuid
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any,Protocol
 
@@ -25,7 +26,8 @@ class LocalGen1Gateway:
         models=[]
         for rid,record in self.system.models._records.items():
             models.append({'record_id':rid,'provider':record.provider,'model':record.model_id,'roles':sorted(record.roles),'enabled':record.enabled,'health':self.system.models.health.status(rid)['state']})
-        return {'available':True,'tools':sorted(self.system.tools.names),'models':models,'boundary':'SparkleSystem/ToolRegistry'}
+        agents=self.system.agents.list() if hasattr(self.system,'agents') else []
+        return {'available':True,'tools':sorted(self.system.tools.names),'models':models,'agents':agents,'boundary':'SparkleSystem/ToolRegistry'}
     def retrieve_context(self,request,requirements):
         bundle=self.system.context.build(request)
         return {'requirements':list(requirements),'rendered':bundle.render()[:6000],'source':'gen1-context'}
@@ -79,4 +81,41 @@ class LocalGen1Gateway:
             if isinstance(pid,str) and hasattr(self.system,'memory_review'):
                 verified=any(r.get('id')==pid for r in self.system.memory_review.list(limit=100,status='pending'))
             return ToolObservation(True,tool,output,{'verified':verified,'method':'re-read pending memory proposal'},True,pid)
-        return ToolObservation(True,tool,output,{'verified':True,'method':'Gen-1 tool result contract; no model assertion'})
+        verification=self._verify_observation(tool,arguments,output)
+        return ToolObservation(True,tool,output,verification)
+
+    def _verify_observation(self,tool,arguments,output):
+        if tool=='workspace_scaffold':
+            project=str(arguments.get('project_name',''));build_id=output.get('build_id')
+            record=next((r for r in self.system.workspaces.list(limit=100) if r.get('build_id')==build_id and r.get('project_name')==project),None)
+            root=(self.system.workspaces.root/project).resolve();verified=record is not None and root.is_dir()
+            for item in output.get('files',[]) if verified else []:
+                target=(root/str(item.get('path',''))).resolve()
+                if root not in target.parents or not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=item.get('sha256'):
+                    verified=False;break
+            return {'verified':verified,'method':'re-read workspace build record and file digests'}
+        if tool=='workspace_verify':
+            vid=output.get('verification_id');project=output.get('project_name')
+            row=next((r for r in self.system.development.list(limit=100) if r.get('verification_id')==vid and r.get('project_name')==project),None)
+            verified=bool(row and row.get('status')=='passed' and row.get('failed')==0 and output.get('status')=='passed')
+            return {'verified':verified,'method':'re-read persisted Gen-1 verification run','verification_id':vid}
+        if tool=='workspace_test':
+            tid=output.get('test_run_id');project=output.get('project_name')
+            row=next((r for r in self.system.workspace_tests.list(limit=100) if r.get('test_run_id')==tid and r.get('project_name')==project),None)
+            verified=bool(row and row.get('status')=='passed' and row.get('returncode')==0 and not row.get('timed_out'))
+            return {'verified':verified,'method':'re-read persisted Gen-1 test run','test_run_id':tid}
+        if tool=='workspace_package':
+            aid=output.get('artifact_id');project=output.get('project_name');digest=output.get('artifact_sha256')
+            row=next((r for r in self.system.artifacts.list(limit=100) if r.get('artifact_id')==aid and r.get('project_name')==project and r.get('artifact_sha256')==digest),None)
+            verified=row is not None
+            if verified:
+                root=self.system.artifacts.artifact_root.resolve();target=(root/str(row.get('artifact_name',''))).resolve()
+                verified=root in target.parents and target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest()==digest
+            return {'verified':verified,'method':'re-read artifact registry and package digest','artifact_id':aid}
+        if tool=='agent_install':
+            name=output.get('name');capability=output.get('capability');tools=sorted(output.get('tools',[]))
+            persisted=[]
+            if hasattr(self.system,'generated_agents'):persisted=self.system.generated_agents.load()
+            verified=any(getattr(spec,'name',None)==name and getattr(spec,'capability',None)==capability and sorted(getattr(spec,'tools',[]))==tools for spec in persisted)
+            return {'verified':verified,'method':'re-read generated-agent persistent store','agent':name}
+        return {'verified':True,'method':'Gen-1 read-only tool result contract; no state change'}

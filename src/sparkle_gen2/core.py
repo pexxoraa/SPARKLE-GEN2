@@ -4,6 +4,7 @@ from datetime import UTC,datetime
 from typing import Any
 from .core_time import now
 from .gen1 import Gen1Gateway
+from .failures import FailureClassifier
 from .models import *
 from .planner import Gen1PlannerModel,PlannerError,PlannerModel
 from .policy import PolicyEngine
@@ -14,7 +15,7 @@ class PersonalAgent:
     def __init__(self,store:Gen2Store,gen1:Gen1Gateway,*,planner:PlannerModel|None=None,policy:PolicyEngine|None=None,max_iterations:int=12,planner_retries:int=1):
         if not 1<=max_iterations<=100:raise ValueError('max_iterations out of range')
         if not 0<=planner_retries<=2:raise ValueError('planner_retries out of range')
-        self.store=store;self.gen1=gen1;self.planner=planner or Gen1PlannerModel(gen1);self.policy=policy or PolicyEngine();self.max_iterations=max_iterations;self.planner_retries=planner_retries
+        self.store=store;self.gen1=gen1;self.planner=planner or Gen1PlannerModel(gen1);self.policy=policy or PolicyEngine();self.failures=FailureClassifier();self.max_iterations=max_iterations;self.planner_retries=planner_retries
     def _goal(self,request):
         stamp=now();return Goal(uuid.uuid4().hex,request.strip(),' '.join(request.strip().split()),success_criteria=[],context_requirements=['relevant Gen-1 context'],created_at=stamp,updated_at=stamp,status=GoalStatus.CREATED)
     def start(self,request):
@@ -75,6 +76,8 @@ class PersonalAgent:
     def decide_approval(self,approval_id:str,decision:str,*,actor:str='user'):
         approval=self.store.load_approval(approval_id)
         if approval.status!=ApprovalStatus.PENDING:raise ValueError('approval is not pending')
+        if approval.expires_at and self._deadline_expired(approval.expires_at):
+            approval.status=ApprovalStatus.EXPIRED;approval.decision_at=now();self.store.save_approval(approval);self.store.event(approval.goal_id,'approval_expired',{'approval_id':approval_id},now());raise ValueError('approval has expired')
         if decision not in {'approve','reject'}:raise ValueError('decision must be approve or reject')
         approval.status=ApprovalStatus.APPROVED if decision=='approve' else ApprovalStatus.REJECTED;approval.approved_by=actor;approval.decision_at=now();self.store.save_approval(approval)
         self.store.event(approval.goal_id,'approval_decided',{'approval_id':approval_id,'status':approval.status.value,'actor':actor},now());return approval.to_dict()
@@ -122,8 +125,12 @@ class PersonalAgent:
                 if approval is None:
                     approval=Approval(uuid.uuid4().hex,goal_id,run.task_run_id,step.step_id,step.description,step.preferred_tool,risk.level,now(),None,ApprovalStatus.PENDING,step.description)
                     self.store.save_approval(approval);run.approvals.append(approval.approval_id);self.store.event(goal_id,'approval_required',{'approval_id':approval.approval_id,'step_id':step.step_id},now())
+                if approval.status==ApprovalStatus.PENDING and approval.expires_at and self._deadline_expired(approval.expires_at):
+                    approval.status=ApprovalStatus.EXPIRED;approval.decision_at=now();self.store.save_approval(approval);self.store.event(goal_id,'approval_expired',{'approval_id':approval.approval_id},now())
                 if approval.status==ApprovalStatus.PENDING:
                     step.status=StepStatus.WAITING;goal.status=GoalStatus.WAITING;run.status='WAITING_FOR_APPROVAL';self._persist(goal,plan,run);return self.report(goal,plan,run)
+                if approval.status==ApprovalStatus.EXPIRED:
+                    step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='APPROVAL_EXPIRED';self._persist(goal,plan,run);return self.report(goal,plan,run)
                 if approval.status==ApprovalStatus.REJECTED:
                     step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';self._persist(goal,plan,run);return self.report(goal,plan,run)
             if step.attempts>step.retry_limit:
@@ -133,7 +140,8 @@ class PersonalAgent:
             if not obs.ok:
                 step.status=StepStatus.FAILED
                 if step.step_id not in run.failed_steps:run.failed_steps.append(step.step_id)
-                goal.status=GoalStatus.WAITING if step.attempts<=step.retry_limit else GoalStatus.BLOCKED;run.status=goal.status.value;self._persist(goal,plan,run);return self.report(goal,plan,run)
+                decision=self.failures.classify(obs.output,attempts=step.attempts,retry_limit=step.retry_limit);self.store.event(goal_id,'failure_classified',decision.to_dict()|{'step_id':step.step_id},now())
+                goal.status=GoalStatus.WAITING if decision.action in {'RETRY','WAIT_USER','WAIT_EXTERNAL'} else GoalStatus.BLOCKED;run.status=decision.action;self._persist(goal,plan,run);return self.report(goal,plan,run)
             goal.status=GoalStatus.VERIFYING
             if not obs.verification.get('verified'):
                 step.status=StepStatus.FAILED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';self.store.event(goal_id,'verification_failed',obs.verification,now());self._persist(goal,plan,run);return self.report(goal,plan,run)
