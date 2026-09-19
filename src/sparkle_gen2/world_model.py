@@ -33,11 +33,16 @@ class WorldModel:
     def _restore(self):
         self.nodes={d['node_id']:WorldNode(**d) for d in self.store.world_nodes()}
         self.edges=[WorldEdge(**d) for d in self.store.world_edges()]
-    def observe(self,node_id,kind,state,provenance=None):
+    def observe(self,node_id,kind,state,provenance=None,*,observed_at=None,reject_older=False):
         if not node_id or not kind:raise ValueError('node identity and kind required')
         if kind not in ENTITY_KINDS:raise ValueError('unsupported world entity kind')
-        provenance=dict(provenance or {'source':'unknown'})
-        n=WorldNode(node_id,kind,dict(state),now(),provenance);self.nodes[node_id]=n
+        provenance=dict(provenance or {'source':'unknown'});stamp=observed_at or now();datetime.fromisoformat(stamp.replace('Z','+00:00'))
+        if reject_older and node_id in self.nodes:
+            old=datetime.fromisoformat(self.nodes[node_id].observed_at.replace('Z','+00:00'));new=datetime.fromisoformat(stamp.replace('Z','+00:00'))
+            if old.tzinfo is None:old=old.replace(tzinfo=timezone.utc)
+            if new.tzinfo is None:new=new.replace(tzinfo=timezone.utc)
+            if new<old:return self.nodes[node_id]
+        n=WorldNode(node_id,kind,dict(state),stamp,provenance);self.nodes[node_id]=n
         if self.store is not None:self.store.save_world_node(n)
         return n
     def relate(self,source,relation,target,provenance=None):

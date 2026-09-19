@@ -53,6 +53,13 @@ class BackgroundTaskService:
         elif t.iterations>=t.max_iterations and t.state=='RUNNING':t.state='PAUSED';t.last_error='iteration_budget_exhausted'
         self.store.save_background_task(t)
         if self.notifier is not None:
-            if t.state=='COMPLETED':self.notifier.create('background','Background task complete','SPARKLE finished approved background work.','NORMAL')
-            elif t.state in {'FAILED','BLOCKED'}:self.notifier.create('background','Background task needs attention',f'Background work stopped with state {t.state}.','HIGH')
+            try:owner=self.store.load_goal(t.goal_id).user_id
+            except Exception:owner='user'
+            correlation={'goal_id':t.goal_id,'background_id':t.background_id}
+            if t.state=='COMPLETED':
+                try:self.notifier.create('background','Background task complete','SPARKLE finished approved background work.','NORMAL',owner_user_id=owner,source_kind='background_task',source_id=f'{t.background_id}:COMPLETED:{t.iterations}',event_type='background_completed',state={'subject':t.background_id,'state':'COMPLETED'},correlation=correlation,provenance={'background_id':t.background_id,'goal_id':t.goal_id})
+                except TypeError:self.notifier.create('background','Background task complete','SPARKLE finished approved background work.','NORMAL')
+            elif t.state in {'FAILED','BLOCKED'}:
+                try:self.notifier.create('background','Background task needs attention',f'Background work stopped with state {t.state}.','HIGH',owner_user_id=owner,source_kind='background_task',source_id=f'{t.background_id}:{t.state}:{t.iterations}',event_type='background_failure',state={'subject':t.background_id,'state':t.state,'reason':t.last_error},correlation=correlation,provenance={'background_id':t.background_id,'goal_id':t.goal_id})
+                except TypeError:self.notifier.create('background','Background task needs attention',f'Background work stopped with state {t.state}.','HIGH')
         return t

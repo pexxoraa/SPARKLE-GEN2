@@ -11,16 +11,36 @@ from .cli import build_components,data_path
 from .conversations import ConversationService
 from .device_identity import DeviceIdentityService
 from .device_routing import DeviceRouter
-from .notifications import NotificationCenter
+from .notifications import NotificationIntelligenceService
+from .voice_runtime import VoiceSessionService
 
 class PersonalCore:
-    def __init__(self):
-        self.store,self.agent,self.sessions=build_components();self.devices=DeviceIdentityService(self.store);self.router=DeviceRouter(self.devices);self.notifications=NotificationCenter(self.store);self.conversations=ConversationService(self.store,self.sessions,self.agent);self.background=BackgroundTaskService(self.store,lambda:self.agent,notifier=self.notifications);self.autonomy=AutonomyController(self.store)
+    def __init__(self,components=None):
+        self.store,self.agent,self.sessions=components or build_components();self.devices=DeviceIdentityService(self.store);self.router=DeviceRouter(self.devices);self.notifications=getattr(self.agent,'notifications',None) or NotificationIntelligenceService(self.store);self.delivery=getattr(self.notifications,'delivery',None);self.conversations=ConversationService(self.store,self.sessions,self.agent);self.voice=VoiceSessionService(self.store,model_manager=getattr(self.agent.gen1,'model_manager',None),conversation_service=self.conversations);self.background=BackgroundTaskService(self.store,lambda:self.agent,notifier=self.notifications);self.autonomy=AutonomyController(self.store);self.operations=self.agent.operations
+    def operations_snapshot(self,scopes=None,*,owner_user_id='user',day=None):
+        if self.operations is None:raise RuntimeError('operations_surface_unavailable')
+        scopes=set(scopes or []);value=self.operations.snapshot(owner_user_id=owner_user_id,day=day)
+        if 'approvals' not in scopes:
+            value['operations']['pending_approvals']=[]
+            if value.get('next_action',{}).get('source')=='approval':value['next_action']={'status':'REDACTED','title':'Approval pending','source':'approval'}
+        if 'notifications' not in scopes:value['today']['notifications']=[]
+        if 'device_management' not in scopes:
+            value['intelligence']['devices']={'status':'UNAVAILABLE','items':[]};value['intelligence']['world_state']={'status':'UNAVAILABLE','items':[]}
+        return value
+    def decide_operations_approval(self,approval_id,decision,*,owner_user_id='user',actor='dashboard'):
+        approval=self.store.load_approval(approval_id);goal=self.store.load_goal(approval.goal_id)
+        if goal.user_id!=owner_user_id:raise PermissionError('approval_owner_mismatch')
+        decided=self.agent.decide_approval(approval_id,decision,actor=actor)
+        result=self.agent.resume(approval.goal_id)
+        reread=self.store.load_approval(approval_id).to_dict()
+        return {'approval':reread,'goal':result,'snapshot':self.operations.snapshot(owner_user_id=owner_user_id)}
     def state(self,scopes=None):
         scopes=set(scopes or []);out={}
         if 'task_status' in scopes:out.update({'goals':self.store.recent_goals(50),'tasks':self.store.all_task_runs(100),'background_tasks':[x.to_dict() for x in self.store.background_tasks()]})
         if 'approvals' in scopes:out['pending_approvals']=[a.to_dict() for a in self.store.all_approvals() if a.status.value=='PENDING']
-        if 'notifications' in scopes:out['notifications']=self.store.notifications()[-50:]
+        if 'notifications' in scopes:
+            out['notifications']=self.notifications.attention('user',limit=50)
+            if self.delivery is not None:out['notification_channels']=self.delivery.channel_states('user');out['notification_delivery']={'recent':self.delivery.attempts('user')[-50:]}
         if 'device_management' in scopes:out['devices']=self.devices.list();out['autonomy']=self.autonomy.get()
         else:out['devices']=[]
         if 'conversation' in scopes:out['sessions']=self.store.all_sessions(50)
@@ -73,15 +93,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(404,{'error':'not_found'})
             device=self._device()
             if u.path=='/api/state':return self._json(200,self.core.state(device.get('capabilities',[])))
+            if u.path=='/api/operations':
+                self._scope(device,'task_status');q=parse_qs(u.query);day=q.get('day',[None])[0];return self._json(200,self.core.operations_snapshot(device.get('capabilities',[]),owner_user_id='user',day=day))
             if u.path=='/api/tasks':self._scope(device,'task_status');return self._json(200,{'tasks':self.core.task_view()})
             if u.path=='/api/approvals':self._scope(device,'approvals');return self._json(200,{'approvals':[a.to_dict() for a in self.core.store.all_approvals() if a.status.value=='PENDING']})
-            if u.path=='/api/notifications':self._scope(device,'notifications');return self._json(200,{'notifications':self.core.store.notifications()[-100:]})
+            if u.path=='/api/notifications':self._scope(device,'notifications');return self._json(200,{'notifications':self.core.notifications.attention('user',limit=100)})
+            if u.path=='/api/voice/status':
+                self._scope(device,'conversation');return self._json(200,self.core.voice.health())
+            if u.path=='/api/notification-channels':
+                self._scope(device,'notifications');return self._json(200,{'channels':[] if self.core.delivery is None else self.core.delivery.channel_states('user')})
+            if u.path=='/api/notification-deliveries/pending':
+                self._scope(device,'notifications');q=parse_qs(u.query);channel=q.get('channel',['desktop'])[0];return self._json(200,{'attempts':[] if self.core.delivery is None else self.core.delivery.pending('user',channel=channel,device_id=device['device_id'])})
+            if u.path.startswith('/api/notification-deliveries/'):
+                self._scope(device,'notifications');parts=[x for x in u.path.split('/') if x]
+                if len(parts)==3 and self.core.delivery is not None:return self._json(200,self.core.delivery.inspect(owner_user_id='user',attempt_id=parts[2]))
             if u.path=='/api/devices':self._scope(device,'device_management');return self._json(200,{'devices':self.core.devices.list()})
             if u.path=='/api/artifacts':self._scope(device,'artifacts');fn=getattr(self.core.agent.gen1,'artifacts',None);return self._json(200,{'artifacts':fn(100) if callable(fn) else []})
             if u.path.startswith('/api/artifacts/') and u.path.endswith('/download'):
                 self._scope(device,'artifacts');parts=[x for x in u.path.split('/') if x];aid=int(parts[2]);fn=getattr(self.core.agent.gen1,'artifact_content',None);value=fn(aid) if callable(fn) else None
                 if not value:return self._json(404,{'error':'artifact_not_found'})
-                raw=value['content'];self.send_response(200);self.send_header('Content-Type','application/zip');self.send_header('Content-Disposition',f"attachment; filename={value['name']}");self.send_header('X-Artifact-SHA256',value['sha256']);self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return
+                raw=value['content'];rows=getattr(self.core.agent.gen1,'artifacts',lambda limit:[])(100);row=next((x for x in rows if x.get('artifact_id')==aid),{});media=str((row.get('manifest') or {}).get('media_type') or 'application/zip');self.send_response(200);self.send_header('Content-Type',media);self.send_header('Content-Disposition',f"attachment; filename={value['name']}");self.send_header('X-Artifact-SHA256',value['sha256']);self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return
             if u.path=='/api/settings/autonomy':self._scope(device,'device_management');return self._json(200,self.core.autonomy.get())
             if u.path=='/api/sessions':self._scope(device,'conversation');return self._json(200,{'sessions':self.core.store.all_sessions(100)})
             if u.path.startswith('/api/sessions/') and u.path.endswith('/messages'):
@@ -103,14 +134,36 @@ class Handler(BaseHTTPRequestHandler):
             if u.path=='/api/chat':self._scope(device,'conversation');return self._json(200,self.core.conversations.send(body.get('text',''),session_id=body.get('session_id'),device_id=device['device_id']))
             if u.path=='/api/background':
                 self._scope(device,'task_status');goal_id=str(body.get('goal_id',''));self.core.store.load_goal(goal_id);task=self.core.background.create(goal_id,max_iterations=int(body.get('max_iterations',100)),time_budget_seconds=float(body.get('time_budget_seconds',300)));return self._json(201,task.to_dict())
+            if u.path=='/api/notification-channels/desktop':
+                self._scope(device,'notifications')
+                if self.core.delivery is None:raise RuntimeError('notification_delivery_unavailable')
+                permission=str(body.get('permission','UNKNOWN')).upper();permission='UNKNOWN' if permission=='DEFAULT' else permission
+                state=self.core.delivery.register_channel(owner_user_id='user',channel='desktop',device_id=device['device_id'],permission=permission,supported=bool(body.get('supported',False)),configured=permission=='GRANTED',provenance={'client':'personal_core_pwa','device_id':device['device_id']});return self._json(200,state.to_dict())
             parts=[x for x in u.path.split('/') if x]
+            if len(parts)==4 and parts[:2]==['api','notification-deliveries'] and parts[3]=='result':
+                self._scope(device,'notifications')
+                if self.core.delivery is None:raise RuntimeError('notification_delivery_unavailable')
+                return self._json(200,self.core.delivery.record_result(parts[2],owner_user_id='user',device_id=device['device_id'],status=body.get('status',''),channel_reference=body.get('channel_reference'),error=body.get('error')))
+            if len(parts)==4 and parts[:2]==['api','notification-deliveries'] and parts[3]=='acknowledge':
+                self._scope(device,'notifications')
+                if self.core.delivery is None:raise RuntimeError('notification_delivery_unavailable')
+                return self._json(200,self.core.delivery.acknowledge(parts[2],owner_user_id='user',device_id=device['device_id']))
+            if len(parts)==4 and parts[:2]==['api','notification-deliveries'] and parts[3]=='retry':
+                self._scope(device,'notifications')
+                if self.core.delivery is None:raise RuntimeError('notification_delivery_unavailable')
+                return self._json(200,self.core.delivery.retry(parts[2],owner_user_id='user'))
+            if len(parts)==5 and parts[:3]==['api','operations','approvals'] and parts[4] in {'approve','reject'}:
+                self._scope(device,'approvals');self._scope(device,'task_status');return self._json(200,self.core.decide_operations_approval(parts[3],parts[4],owner_user_id='user',actor='device:'+device['device_id']))
             if len(parts)==4 and parts[:2]==['api','approvals'] and parts[3] in {'approve','reject'}:self._scope(device,'approvals');return self._json(200,self.core.agent.decide_approval(parts[2],parts[3],actor='device:'+device['device_id']))
             if len(parts)==4 and parts[:2]==['api','background'] and parts[3] in {'pause','resume','retry','cancel'}:
                 self._scope(device,'task_status');fn=getattr(self.core.background,parts[3]);return self._json(200,fn(parts[2]).to_dict())
             if len(parts)==4 and parts[:2]==['api','tasks'] and parts[3] in {'resume','cancel','replan'}:
                 self._scope(device,'task_status')
                 fn=getattr(self.core.agent,parts[3]);return self._json(200,fn(parts[2]))
-            if len(parts)==4 and parts[:2]==['api','notifications'] and parts[3]=='read':self._scope(device,'notifications');return self._json(200,self.core.notifications.read(parts[2]).to_dict())
+            if len(parts)==4 and parts[:2]==['api','notifications'] and parts[3]=='read':
+                self._scope(device,'notifications');value=self.core.notifications.read(parts[2],owner_user_id='user').to_dict()
+                if self.core.delivery is not None:self.core.delivery.acknowledge_notification(parts[2],owner_user_id='user',channel='dashboard')
+                return self._json(200,value)
             if len(parts)==4 and parts[:2]==['api','devices'] and parts[3]=='revoke':
                 self._scope(device,'device_management')
                 if parts[2]==device['device_id']:raise PermissionError('cannot_revoke_current_device_from_same_session')

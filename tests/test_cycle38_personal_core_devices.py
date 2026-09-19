@@ -52,7 +52,9 @@ class Cycle38Tests(unittest.TestCase):
             try:
                 code=core.devices.create_enrollment_code()['code'];_,_,e1=request(base+'/api/enroll',data={'code':code,'name':'Laptop','kind':'laptop','os':'Linux','capabilities':['conversation','task_status','device_management']});code=core.devices.create_enrollment_code()['code'];_,_,e2=request(base+'/api/enroll',data={'code':code,'name':'Phone','kind':'phone','os':'Android','capabilities':['conversation','task_status','device_management']})
                 _,_,chat=request(base+'/api/chat',token=e1['token'],data={'text':'robotics','session_id':None});sid=chat['session_id'];_,_,chat2=request(base+'/api/chat',token=e2['token'],data={'text':'continue','session_id':sid});self.assertEqual(chat2['session_id'],sid);self.assertEqual(chat2['result']['goal_id'],chat['result']['goal_id']);self.assertEqual(core.agent.n,1);_,_,msgs=request(base+f'/api/sessions/{sid}/messages',token=e1['token']);self.assertEqual([m['text'] for m in msgs['messages'] if m['role']=='user'],['robotics','continue'])
-                with self.assertRaises(urllib.error.HTTPError) as denied:request(base+'/api/notifications',token=e2['token']);self.assertEqual(denied.exception.code,401)
+                with self.assertRaises(urllib.error.HTTPError) as denied:request(base+'/api/notifications',token=e2['token'])
+                try:self.assertEqual(denied.exception.code,401)
+                finally:denied.exception.close()
                 with urllib.request.urlopen(base+'/',timeout=5) as r:html=r.read().decode();headers=dict(r.headers)
                 self.assertIn('What should we work on?',html);self.assertIn('Content-Security-Policy',headers)
             finally:server.shutdown();server.server_close()

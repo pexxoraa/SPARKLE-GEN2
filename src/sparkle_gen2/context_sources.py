@@ -20,7 +20,7 @@ class PersonalContextAssembler:
             for name,scope in (('calendar','calendar.read'),('gmail','gmail.read'),('outlook','outlook.read'),('files','files.read')):
                 try:
                     h=self.connectors.health(name)
-                    if h.get('status')!='CONNECTED':continue
+                    if h.get('status') not in {'CONNECTED','HEALTHY'}:continue
                     op='search' if name in {'gmail','outlook','files'} else 'list'
                     r=self.connectors.invoke(name,op,{'query':goal},scope);item=self._item(name,name,r.get('result'),{'connector':name});sources.setdefault(name,[]).append(item)
                     if name in {'gmail','outlook'}:sources.setdefault('email',[]).append(self._item('email',name,r.get('result'),{'connector':name}))
@@ -41,6 +41,12 @@ class PersonalContextAssembler:
             try:sources['semantic']=self.semantic_index.context_items(goal,k=5)
             except Exception:pass
         if self.world is not None:
-            try:sources['world_state']=[self._item('world_state',n['node_id'],n,n.get('provenance',{}),freshness=max(0.0,1.0-min(float(n.get('age_seconds',0))/3600,1.0))) for n in self.world.snapshot().get('nodes',[])]
+            try:
+                items=[]
+                for n in self.world.snapshot().get('nodes',[]):
+                    age=float(n.get('age_seconds',0));prov=n.get('provenance',{}) or {};limit=10.0 if prov.get('source')=='perception' else 30.0
+                    if age>limit:continue
+                    items.append(self._item('world_state',n['node_id'],n,prov,freshness=max(0.0,1.0-min(age/max(limit,1e-9),1.0))))
+                if items:sources['world_state']=items
             except Exception:pass
         return self.engine.build(goal,sources)

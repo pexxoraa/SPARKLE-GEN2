@@ -60,3 +60,15 @@ The PWA shell can open from its static cache, but API state is never fabricated 
 ## Model behavior
 
 The UI never exposes a model picker for normal use. Model-backed work goes only to the Nemotron-only Gen-2 registry. When Nemotron is unavailable, the UI reports degraded/waiting state; deterministic local features remain usable and no hidden model fallback occurs.
+
+## Personal Operations Surface
+
+The PWA Home view is now a bounded read-only projection over authoritative Gen-2 state through `/api/operations`. `PersonalOperationsService` aggregates the persisted Daily Brief, owner-scoped goals/task runs, pending approvals, background work, notifications, capability/model availability, connector health, device/world freshness, and diagnostics. It does not maintain a second dashboard database and it does not regenerate the Daily Brief. Missing subsystems render explicit `EMPTY`/`UNAVAILABLE` states.
+
+Dashboard approval controls reuse the existing approval object and `PersonalAgent.resume()` path. The UI cannot invoke an approved tool directly: human decision is persisted first, then the original goal resumes, exact approved scope is checked by PersonalAgent, execution/verification run normally, and the operations snapshot is reread. Device capability scopes continue to redact approvals, notifications, devices and world state from clients that were not authorized for those surfaces.
+
+The operations projection omits raw requested approval scope, hidden reasoning, raw content payloads and secret/credential fields; secret-like values in human-readable strings are redacted. API responses remain `no-store` and the service worker still caches only static PWA assets.
+
+## Notification attention state
+
+Personal Core and the Personal Operations Surface consume the owner-scoped final attention view rather than raw event volume. Notification cards can show grouped occurrence count, delivery/escalation decision, and the persisted concise `why` explanation. Authenticated `mark read` continues to require the existing device `notifications` scope and now also checks notification ownership. Suppressed decisions do not create UI notifications but remain durably auditable in notification-decision provenance.

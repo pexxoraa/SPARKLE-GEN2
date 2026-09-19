@@ -61,12 +61,19 @@
           <div class="orb" aria-hidden="true"><span></span></div>
           <form id="hero-form" class="composer compact"><textarea id="hero-input" rows="1" placeholder="Ask SPARKLE anything…" required></textarea><button type="submit" class="send" aria-label="Send">➤</button></form>
         </div>
-        <div class="section-heading"><div><p class="eyebrow">RIGHT NOW</p><h3>Active work</h3></div><button class="text-button" data-jump="tasks">View all</button></div>
+        <div class="section-heading"><div><p class="eyebrow">TODAY</p><h3>Personal operations</h3></div><button class="text-button" data-jump="tasks">View all work</button></div>
+        <div class="dashboard-grid ops-grid">
+          <article class="glass panel"><div class="panel-title"><span>✦</span><h3>Next action</h3></div><div id="home-next-action"></div></article>
+          <article class="glass panel"><div class="panel-title"><span>☷</span><h3>Daily Brief</h3></div><div id="home-daily"></div></article>
+          <article class="glass panel wide-panel"><div class="panel-title"><span>!</span><h3>Attention</h3></div><div id="home-attention"></div></article>
+        </div>
+        <div class="section-heading"><div><p class="eyebrow">OPERATIONS</p><h3>Active work</h3></div><button class="text-button" data-jump="tasks">Task control</button></div>
         <div id="active-work" class="task-grid"></div>
         <div class="dashboard-grid">
-          <article class="glass panel"><div class="panel-title"><span>◇</span><h3>Approvals</h3></div><div id="home-approvals"></div></article>
-          <article class="glass panel"><div class="panel-title"><span>⌁</span><h3>Devices</h3></div><div id="home-devices"></div></article>
-          <article class="glass panel wide-panel"><div class="panel-title"><span>○</span><h3>Recent notifications</h3></div><div id="home-notifications"></div></article>
+          <article class="glass panel"><div class="panel-title"><span>◇</span><h3>Waiting for you</h3></div><div id="home-approvals"></div></article>
+          <article class="glass panel"><div class="panel-title"><span>○</span><h3>Notifications</h3></div><div id="home-notifications"></div></article>
+          <article class="glass panel wide-panel"><div class="panel-title"><span>◈</span><h3>Intelligence & state</h3></div><div id="home-capabilities"></div><div id="home-connectors"></div><div id="home-world"></div></article>
+          <article class="glass panel wide-panel"><div class="panel-title"><span>⌁</span><h3>Authorized clients</h3></div><div id="home-devices"></div></article>
         </div>
       </section>
 
@@ -81,7 +88,7 @@
       <section id="view-approvals" class="view"><div class="view-header"><div><h3>Approval center</h3><p class="muted">Actions stay bound to task, scope, risk, and time.</p></div></div><div id="approval-list" class="stack"></div></section>
       <section id="view-devices" class="view"><div class="view-header"><div><h3>My devices</h3><p class="muted">Authorized endpoints for shared sessions and bounded local capabilities.</p></div><label class="autonomy-control">Autonomy <select id="autonomy-mode"><option value="MANUAL">Manual</option><option value="APPROVAL_REQUIRED">Approval required</option><option value="TRUSTED_ACTIONS">Trusted actions</option><option value="LIMITED_AUTONOMOUS">Limited autonomous</option></select></label></div><div id="device-list" class="device-grid"></div></section>
       <section id="view-artifacts" class="view"><div class="view-header"><div><h3>Artifact workspace</h3><p class="muted">Verified generated packages and outputs with provenance and integrity digests.</p></div></div><div id="artifact-list" class="stack"></div></section>
-      <section id="view-notifications" class="view"><div class="view-header"><div><h3>Notifications</h3><p class="muted">Important progress, approvals, failures, and device events.</p></div></div><div id="notification-list" class="stack"></div></section>
+      <section id="view-notifications" class="view"><div class="view-header"><div><h3>Notifications</h3><p class="muted">Important progress, approvals, failures, and device events.</p><p id="notification-channel-status" class="muted">Desktop permission unknown.</p></div><button id="enable-desktop-notifications" class="secondary">Enable desktop notifications</button></div><div id="notification-list" class="stack"></div></section>
     </main>
   </div>
   <div id="toast" class="toast hidden" role="status"></div>

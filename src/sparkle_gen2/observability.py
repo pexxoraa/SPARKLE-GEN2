@@ -17,8 +17,12 @@ class OperationTrace:
     def to_dict(self): return asdict(self)
 
 class TraceRecorder:
-    def __init__(self): self._traces=[]
-    def record(self,kind,component,status,*,goal_id=None,task_run_id=None,correlation=None,detail=None):
-        t=OperationTrace(uuid.uuid4().hex,goal_id,task_run_id,kind,component,status,now(),correlation or {},detail or {})
-        self._traces.append(t);return t
-    def list(self,goal_id=None): return [t for t in self._traces if goal_id is None or t.goal_id==goal_id]
+    def __init__(self,store=None): self._traces=[];self.store=store
+    def record(self,kind,component,status,*,goal_id=None,task_run_id=None,trace_id=None,correlation=None,detail=None):
+        t=OperationTrace(trace_id or uuid.uuid4().hex,goal_id,task_run_id,kind,component,status,now(),correlation or {},detail or {})
+        if self.store is not None:self.store.save_operation_trace(t)
+        else:self._traces.append(t)
+        return t
+    def list(self,goal_id=None,*,trace_id=None):
+        if self.store is not None:return [OperationTrace(**d) for d in self.store.operation_traces(goal_id=goal_id,trace_id=trace_id)]
+        return [t for t in self._traces if (goal_id is None or t.goal_id==goal_id) and (trace_id is None or t.trace_id==trace_id)]

@@ -4,6 +4,7 @@ from sparkle_gen2.connector_catalog import build_default_connectors
 from sparkle_gen2.core import PersonalAgent
 from sparkle_gen2.gen1 import ToolObservation
 from sparkle_gen2.models import PlanProposal,PlanProposalStep
+from sparkle_gen2.observability import TraceRecorder
 from sparkle_gen2.modes import AdvancedCodingMode,RoboticsEngineerMode
 from sparkle_gen2.planner import StaticPlanner
 from sparkle_gen2.robotics import RobotSafetyGateway
@@ -28,6 +29,13 @@ class Cycle12Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             r=PersonalAgent(Gen2Store(Path(d)/'g.sqlite3'),G(),planner=StaticPlanner(proposal())).start('x')
             self.assertTrue(r['trace_id']);self.assertTrue(r['task_run_id'])
+    def test_personal_agent_trace_persists_and_correlates_after_restart(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'g.sqlite3';result=PersonalAgent(Gen2Store(path),G(),planner=StaticPlanner(proposal())).start('x')
+            traces=TraceRecorder(Gen2Store(path)).list(trace_id=result['trace_id'])
+            self.assertTrue(traces);self.assertTrue(all(t.trace_id==result['trace_id'] for t in traces))
+            self.assertTrue({'goal','context','planning','task','action','observation','verification'}<={t.kind for t in traces})
+            self.assertTrue(any(t.status=='COMPLETED' for t in traces));self.assertTrue(any(t.task_run_id==result['task_run_id'] for t in traces))
     def test_connector_catalog_names_all_control_surfaces(self):
         names={r['name'] for r in build_default_connectors().discover()}
         self.assertTrue({'files','linux','computer','browser','esp32','mqtt','ros2','mobile'}<=names)

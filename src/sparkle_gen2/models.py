@@ -23,7 +23,7 @@ class Goal:
     constraints:list[str]=field(default_factory=list); priority:int=5; deadline:str|None=None
     success_criteria:list[str]=field(default_factory=list); risk_level:str='LOW'
     context_requirements:list[str]=field(default_factory=list); status:GoalStatus=GoalStatus.CREATED
-    plan_id:str|None=None; parent_goal_id:str|None=None; created_at:str=''; updated_at:str=''
+    plan_id:str|None=None; parent_goal_id:str|None=None; created_at:str=''; updated_at:str=''; user_id:str='user'
     def to_dict(self):
         d=asdict(self); d['status']=self.status.value; return d
 

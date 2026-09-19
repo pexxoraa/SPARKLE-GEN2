@@ -9,10 +9,24 @@
       "roles": [
         "general",
         "reasoning",
+        "planning",
+        "coding",
+        "tool_use"
+      ],
+      "capabilities": [
+        "general",
+        "reasoning",
+        "planning",
         "coding",
         "tool_use"
       ],
       "modalities": [
+        "text"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
         "text"
       ],
       "enabled": true,
@@ -35,6 +49,249 @@
         "attempts": 3,
         "base_delay_seconds": 0.5
       }
+    },
+    {
+      "id": "nvidia-nemotron-3-nano-omni",
+      "provider": "nvidia",
+      "model_id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+      "adapter": "nvidia_chat_completions",
+      "roles": [
+        "multimodal",
+        "perception"
+      ],
+      "capabilities": [
+        "reasoning",
+        "multimodal",
+        "perception"
+      ],
+      "modalities": [
+        "text",
+        "image"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "enabled": true,
+      "context_window": 262144,
+      "max_output_tokens": 8192,
+      "temperature": 0.2,
+      "thinking": false,
+      "supports_streaming": true,
+      "supports_tools": false,
+      "allow_fallback": false,
+      "latency_class": "balanced",
+      "base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "secret_refs": [
+        "NVIDIA_API_KEY",
+        "SPARKLE_LLM_API_KEY"
+      ],
+      "timeout_seconds": 120,
+      "retry": {
+        "attempts": 3,
+        "base_delay_seconds": 0.5
+      }
+    },
+    {
+      "id": "nvidia-nemotron-3-embed-1b",
+      "provider": "nvidia",
+      "model_id": "nvidia/nemotron-3-embed-1b",
+      "adapter": "nvidia_embeddings",
+      "roles": [
+        "embedding"
+      ],
+      "capabilities": [
+        "embedding"
+      ],
+      "modalities": [
+        "text"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "embedding"
+      ],
+      "enabled": true,
+      "supports_streaming": false,
+      "supports_tools": false,
+      "allow_fallback": false,
+      "latency_class": "fast",
+      "base_url": "https://integrate.api.nvidia.com/v1/embeddings",
+      "secret_refs": [
+        "NVIDIA_API_KEY",
+        "SPARKLE_LLM_API_KEY"
+      ],
+      "timeout_seconds": 120,
+      "retry": {
+        "attempts": 3,
+        "base_delay_seconds": 0.5
+      }
+    },
+    {
+      "id": "nvidia-llama-nemotron-rerank-vl-1b-v2",
+      "provider": "nvidia",
+      "model_id": "nvidia/llama-nemotron-rerank-vl-1b-v2",
+      "adapter": "nvidia_reranking",
+      "roles": [
+        "reranking"
+      ],
+      "capabilities": [
+        "reranking"
+      ],
+      "modalities": [
+        "text"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "ranking"
+      ],
+      "enabled": true,
+      "supports_streaming": false,
+      "supports_tools": false,
+      "allow_fallback": false,
+      "latency_class": "fast",
+      "base_url": "https://ai.api.nvidia.com/v1/retrieval/nvidia/llama-nemotron-rerank-vl-1b-v2/reranking",
+      "secret_refs": [
+        "NVIDIA_API_KEY",
+        "SPARKLE_LLM_API_KEY"
+      ],
+      "timeout_seconds": 120,
+      "max_candidates": 64,
+      "truncate": "END",
+      "retry": {
+        "attempts": 3,
+        "base_delay_seconds": 0.5
+      }
+    },
+    {
+      "id": "nvidia-nemotron-3.5-content-safety",
+      "provider": "nvidia",
+      "model_id": "nvidia/nemotron-3.5-content-safety",
+      "adapter": "nvidia_content_safety",
+      "roles": [
+        "safety"
+      ],
+      "capabilities": [
+        "safety"
+      ],
+      "modalities": [
+        "text"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "safety"
+      ],
+      "enabled": true,
+      "supports_streaming": false,
+      "supports_tools": false,
+      "allow_fallback": false,
+      "latency_class": "fast",
+      "base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
+      "secret_refs": [
+        "NVIDIA_API_KEY",
+        "SPARKLE_LLM_API_KEY"
+      ],
+      "timeout_seconds": 120,
+      "retry": {
+        "attempts": 3,
+        "base_delay_seconds": 0.5
+      }
+    },
+    {
+      "id": "nvidia-nemotron-voicechat",
+      "provider": "nvidia",
+      "model_id": "nvidia/nemotron-voicechat",
+      "adapter": "nvidia_voicechat",
+      "roles": [
+        "voice"
+      ],
+      "capabilities": [
+        "voice"
+      ],
+      "modalities": [
+        "text",
+        "audio"
+      ],
+      "input_modalities": [
+        "audio",
+        "text"
+      ],
+      "output_modalities": [
+        "text",
+        "audio"
+      ],
+      "enabled": true,
+      "supports_streaming": true,
+      "supports_tools": false,
+      "allow_fallback": false,
+      "latency_class": "fast",
+      "secret_refs": [
+        "NEMOTRON_VOICECHAT_API_KEY"
+      ],
+      "require_all_secret_refs": true,
+      "requires_verified_transport": true,
+      "transport_verified": false,
+      "transport_kind": "nvcf_streaming_proxy",
+      "function_id": "42c86b5f-545a-4b2f-a83b-90fd71da9912",
+      "function_version": "bfaa0774-00e3-43d3-ae4e-254c4f9be49c",
+      "function_name": "ai-nemotron-voicechat",
+      "health_path": "/v1/realtime/health",
+      "input_audio": {
+        "encoding": "pcm_s16le",
+        "sample_rate_hz": 16000,
+        "channels": 1,
+        "sample_width_bytes": 2
+      },
+      "output_audio": {
+        "encoding": "pcm_s16le",
+        "sample_rate_hz": 22050,
+        "channels": 1,
+        "sample_width_bytes": 2
+      }
+    },
+    {
+      "id": "nvidia-flux-2-klein-4b",
+      "provider": "nvidia",
+      "model_id": "black-forest-labs/flux.2-klein-4b",
+      "adapter": "nvidia_image_generation",
+      "roles": [
+        "image_generation"
+      ],
+      "capabilities": [
+        "image_generation"
+      ],
+      "modalities": [
+        "text"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "image"
+      ],
+      "enabled": true,
+      "supports_streaming": false,
+      "supports_tools": false,
+      "allow_fallback": false,
+      "latency_class": "balanced",
+      "base_url": "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b",
+      "secret_refs": [
+        "NVIDIA_API_KEY",
+        "SPARKLE_LLM_API_KEY"
+      ],
+      "timeout_seconds": 180,
+      "retry": {
+        "attempts": 2,
+        "base_delay_seconds": 1.0
+      }
     }
   ],
   "routing": {
@@ -42,6 +299,14 @@
     "general": "nvidia-nemotron-3.5-lightning",
     "reasoning": "nvidia-nemotron-3.5-lightning",
     "coding": "nvidia-nemotron-3.5-lightning",
-    "tool_use": "nvidia-nemotron-3.5-lightning"
+    "tool_use": "nvidia-nemotron-3.5-lightning",
+    "planning": "nvidia-nemotron-3.5-lightning",
+    "multimodal": "nvidia-nemotron-3-nano-omni",
+    "perception": "nvidia-nemotron-3-nano-omni",
+    "embedding": "nvidia-nemotron-3-embed-1b",
+    "reranking": "nvidia-llama-nemotron-rerank-vl-1b-v2",
+    "safety": "nvidia-nemotron-3.5-content-safety",
+    "voice": "nvidia-nemotron-voicechat",
+    "image_generation": "nvidia-flux-2-klein-4b"
   }
 }

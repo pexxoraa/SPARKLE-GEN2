@@ -28,11 +28,11 @@ class VerticalSliceTests(unittest.TestCase):
             self.assertTrue(all(c['status']=='SATISFIED' for c in result['criteria']))
     def test_failure_does_not_false_complete_and_can_retry(self):
         with tempfile.TemporaryDirectory() as d:
-            gateway=FakeGen1(True);agent=PersonalAgent(Gen2Store(Path(d)/'g2.sqlite3'),gateway,planner=StaticPlanner(proposal()))
-            first=agent.start('Do a bounded task');self.assertEqual(first['status'],'WAITING');self.assertEqual(agent.resume(first['goal_id'])['status'],'COMPLETED')
+            path=Path(d)/'g2.sqlite3';gateway=FakeGen1(True);agent=PersonalAgent(Gen2Store(path),gateway,planner=StaticPlanner(proposal()))
+            first=agent.start('Do a bounded task');self.assertEqual(first['status'],'WAITING');self.assertTrue(any(t['kind']=='recovery' and t['status']=='RETRY' for t in Gen2Store(path).operation_traces(trace_id=first['trace_id'])));self.assertEqual(agent.resume(first['goal_id'])['status'],'COMPLETED')
     def test_restart_recovers_persisted_goal(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'g2.sqlite3';gateway=FakeGen1(True);planner=StaticPlanner(proposal())
             first=PersonalAgent(Gen2Store(path),gateway,planner=planner).start('Do a restart-safe task')
-            self.assertEqual(first['status'],'WAITING');self.assertEqual(PersonalAgent(Gen2Store(path),gateway,planner=planner).resume(first['goal_id'])['status'],'COMPLETED')
+            self.assertEqual(first['status'],'WAITING');final=PersonalAgent(Gen2Store(path),gateway,planner=planner).resume(first['goal_id']);self.assertEqual(final['status'],'COMPLETED');self.assertEqual(final['trace_id'],first['trace_id']);self.assertTrue(any(t['status']=='COMPLETED' for t in Gen2Store(path).operation_traces(trace_id=first['trace_id'])))
 if __name__=='__main__':unittest.main()

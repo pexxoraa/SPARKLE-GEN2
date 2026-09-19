@@ -29,6 +29,7 @@ class Gen1ApprovalReconciliationTests(unittest.TestCase):
             system.memory_review.review(row['id'],row['digest'],'approve',reviewer='cli')
             restarted=PersonalAgent(Gen2Store(db),gateway,planner=planner);final=restarted.resume(second['goal_id'])
             self.assertEqual(final['status'],'COMPLETED');self.assertEqual(system.memory_review.list(limit=100,status='pending'),[])
+            traces=Gen2Store(db).operation_traces(trace_id=final['trace_id']);self.assertTrue(any(t['kind']=='verification' and t['status']=='VERIFIED' for t in traces))
             memories=system.memory.search('remember this',category='preferences',limit=10);self.assertTrue(any(m['key']=='cycle2_test' for m in memories))
     def test_gen1_operator_rejection_blocks_without_duplicate_write(self):
         with tempfile.TemporaryDirectory() as d:
