@@ -147,6 +147,7 @@ class AutomationOrchestrator:
         if op=='pause':self.system.automations.set_enabled(automation_id,False);binding.status='PAUSED'
         elif op=='resume':self.system.automations.set_enabled(automation_id,True);binding.status='ACTIVE'
         elif op=='cancel':self.system.automations.set_enabled(automation_id,False);binding.status='CANCELLED'
+        elif op=='disable':self.system.automations.set_enabled(automation_id,False);binding.status='DISABLED'
         elif op=='run_now':
             if item['kind']=='condition':raise ValueError('condition automations do not support run-now; trigger evidence is required')
             stamp=now()
@@ -157,6 +158,7 @@ class AutomationOrchestrator:
     def pause(self,automation_id,owner_user_id=None):return self._control(automation_id,'pause',owner_user_id)
     def resume(self,automation_id,owner_user_id=None):return self._control(automation_id,'resume',owner_user_id)
     def cancel(self,automation_id,owner_user_id=None):return self._control(automation_id,'cancel',owner_user_id)
+    def disable(self,automation_id,owner_user_id=None):return self._control(automation_id,'disable',owner_user_id)
     def run_now(self,automation_id,owner_user_id=None):return self._control(automation_id,'run_now',owner_user_id)
     def run_due(self,when=None):
         runs=self.runner.run_due(when)
@@ -168,12 +170,13 @@ class AutomationOrchestrator:
     def invoke(self,tool,args,*,owner_user_id,source_goal_id):
         if tool=='automation_create':
             value=self.create(owner_user_id=owner_user_id,source_goal_id=source_goal_id,**dict(args));method='re-read authoritative Gen-1 automation definition and Gen-2 owner binding'
-        elif tool in {'automation_pause','automation_resume','automation_cancel','automation_run_now'}:
+        elif tool in {'automation_pause','automation_resume','automation_cancel','automation_disable','automation_run_now'}:
             aid=int(args.get('automation_id'));value=getattr(self,tool.removeprefix('automation_'))(aid,owner_user_id);method='re-read authoritative Gen-1 automation control state'
         else:raise ValueError('unsupported automation operation')
         verified=value['binding'] is not None and value['binding']['owner_user_id']==owner_user_id
         if tool=='automation_pause':verified=verified and value['automation']['enabled'] is False and value['binding']['status']=='PAUSED'
         elif tool=='automation_resume':verified=verified and value['automation']['enabled'] is True and value['binding']['status']=='ACTIVE'
         elif tool=='automation_cancel':verified=verified and value['automation']['enabled'] is False and value['binding']['status']=='CANCELLED'
+        elif tool=='automation_disable':verified=verified and value['automation']['enabled'] is False and value['binding']['status']=='DISABLED'
         elif tool=='automation_run_now':verified=verified and value['automation']['enabled'] is True and value['automation']['next_run_at'] is not None
         return {'output':value,'verification':{'verified':verified,'method':method,'automation_id':value['automation']['id']}}

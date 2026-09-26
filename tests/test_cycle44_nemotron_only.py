@@ -4,14 +4,16 @@ from sparkle_gen2.gen1 import LocalGen1Gateway
 from sparkle_gen2.retrieval import DeterministicRetrievalRuntime
 
 class Cycle44Tests(unittest.TestCase):
- def test_packaged_registry_is_nvidia_nemotron_only_with_no_fallback(self):
+ def test_packaged_registry_keeps_nvidia_semantic_routes_and_modular_live_voice_no_fallback(self):
   p=Path(__file__).parents[1]/"src/sparkle_gen2/nemotron_models.json";d=json.loads(p.read_text())
-  self.assertEqual(len(d["models"]),7);self.assertEqual(d["active_model"],"nvidia-nemotron-3.5-lightning")
-  for m in d["models"]:
-   self.assertEqual(m["provider"],"nvidia");self.assertFalse(m["allow_fallback"])
+  self.assertEqual(len(d["models"]),8);self.assertEqual(d["active_model"],"nvidia-nemotron-3.5-lightning");self.assertTrue(all(not m["allow_fallback"] for m in d["models"]))
+  gemini=next(m for m in d["models"] if m["id"]=="google-gemini-3.8-live");self.assertEqual(gemini["provider"],"google");self.assertEqual(gemini["model_id"],"gemini-3.8-live");self.assertTrue(gemini["transport_verified"]);self.assertEqual(gemini["voice_provider_alias"],"gemini")
+  nvidia=[m for m in d["models"] if m["id"]!="google-gemini-3.8-live"]
+  for m in nvidia:
+   self.assertEqual(m["provider"],"nvidia")
    if "image_generation" in m.get("capabilities",[]):self.assertEqual(m["model_id"],"black-forest-labs/flux.2-klein-4b")
    else:self.assertIn("nemotron",m["model_id"].lower())
-  self.assertEqual(d["routing"]["multimodal"],"nvidia-nemotron-3-nano-omni");self.assertEqual(d["routing"]["embedding"],"nvidia-nemotron-3-embed-1b")
+  self.assertEqual(d["routing"]["voice"],"google-gemini-3.8-live");self.assertEqual(d["routing"]["multimodal"],"nvidia-nemotron-3-nano-omni");self.assertEqual(d["routing"]["embedding"],"nvidia-nemotron-3-embed-1b")
  def test_repository_has_no_retired_local_ai_runtime_names(self):
   root=Path(__file__).parents[1];banned=["q"+"wen","no"+"mic-embed","moon"+"dream","ol"+"lama"]
   hits=[]

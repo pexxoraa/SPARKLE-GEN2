@@ -15,6 +15,9 @@ TEXT_TYPES={'.txt','text/plain'}
 CSV_TYPES={'.csv','text/csv','application/csv'}
 IMAGE_EXTS={'.png','.jpg','.jpeg','.gif','.webp','.bmp','.tif','.tiff'}
 MAX_CELL_CHARS=4000
+PDFINFO=Path('/usr/bin/pdfinfo')
+PDFTOTEXT=Path('/usr/bin/pdftotext')
+DOCUMENT_SUBPROCESS_ENV={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8','LC_ALL':'C.UTF-8'}
 
 @dataclass(slots=True)
 class SourceLocation:
@@ -160,9 +163,10 @@ class DocumentIntelligenceService:
         return {'type':'image','description':text,'media_type':media},{'semantic_understanding':'multimodal','_model_provenance':prov},'nvidia-multimodal/image'
 
     def _pdf(self,p):
-        info=subprocess.run(['pdfinfo',str(p)],capture_output=True,text=True,timeout=15,check=False)
+        if not PDFINFO.is_file() or not PDFTOTEXT.is_file():raise ExternalSemanticBlock('required local PDF extraction helpers are unavailable')
+        info=subprocess.run([str(PDFINFO),str(p)],stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=15,check=False,env=DOCUMENT_SUBPROCESS_ENV)
         if info.returncode!=0:raise ValueError('pdfinfo could not validate document')
-        run=subprocess.run(['pdftotext','-f','1','-l',str(self.max_units),'-layout',str(p),'-'],capture_output=True,text=True,timeout=30,check=False)
+        run=subprocess.run([str(PDFTOTEXT),'-f','1','-l',str(self.max_units),'-layout',str(p),'-'],stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=30,check=False,env=DOCUMENT_SUBPROCESS_ENV)
         if run.returncode!=0:raise ValueError('pdftotext extraction failed')
         raw=run.stdout
         if not raw.strip():raise ExternalSemanticBlock('PDF contains no extractable text; OCR/vision is externally blocked')

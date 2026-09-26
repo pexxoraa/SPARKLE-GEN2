@@ -12,8 +12,12 @@ The current live local adapter is simulation-only: `ROS2PosePerceptionAdapter` r
 
 Freshness is evaluated from the original observation timestamp on every read. The default perception boundary treats observations as fresh for 10 seconds, stale afterwards, and expired after 120 seconds. Persisting or restarting never refreshes an observation. Perception-derived world nodes are excluded from normal PersonalAgent context once they age beyond the fresh perception window. A PersonalAgent-mediated ROS2 move requires a fresh perception state before the existing human-approval, independent safety-controller, e-stop, bounded-motion, and post-action ROS2 verification gates.
 
-Camera/depth semantic understanding is a separate model requirement (`perception` + `multimodal`). The current text-only Nemotron production route cannot satisfy it and no vision result is fabricated. Physical camera/LiDAR/robot perception remains externally blocked.
+Camera/depth semantic understanding uses the separate NVIDIA Omni `perception` + `multimodal` route when a bounded image source is actually available. Model capability does not imply a physical sensor: physical camera/LiDAR/robot perception remains externally blocked until a real registered sensor provides observations. Recorded/simulated inputs are labeled simulation/recorded evidence and never promoted to physical observation.
 
 ## Simulation acceptance
 
 On the authoritative workstation, an actual offscreen turtlesim node and the repository's real `/sparkle_safety_controller` node were started for acceptance. Gen-2 observed a live pose, persisted normalized perception/world provenance, waited for human approval, executed a bounded relative move through the safety controller, independently reread the ROS2 pose, and captured a fresh post-move perception observation. This is `SIMULATION_LIVE_VERIFIED`; it is not evidence of physical robot or physical sensor support.
+
+## Robotics Engineer workspace finalization
+
+RoboticsEngineerMode is a bounded read-oriented projection over the existing RobotSafetyGateway, WorldModel, perception, experiment, document, research, and engineering services. It introduces no raw ROS2 or shell path. Diagnostic findings are derived from actual gateway/world/perception evidence. Motion remains separate: verified motion requires explicit approval and RobotSafetyGateway.execute_verified; only independently verified post-action state is written back to the WorldModel. Physical robotics remains externally blocked when no real robot plus independent safety/e-stop environment is attached.

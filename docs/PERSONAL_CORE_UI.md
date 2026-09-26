@@ -59,7 +59,11 @@ The PWA shell can open from its static cache, but API state is never fabricated 
 
 ## Model behavior
 
-The UI never exposes a model picker for normal use. Model-backed work goes only to the Nemotron-only Gen-2 registry. When Nemotron is unavailable, the UI reports degraded/waiting state; deterministic local features remain usable and no hidden model fallback occurs.
+The UI never exposes a model picker for normal use. Model-backed work uses the capability-routed Gen-2 registry with fallback disabled: NVIDIA routes serve the existing non-voice capabilities and Google Gemini 3.8 Live is the accepted voice route. If a selected provider is unavailable, the UI reports degraded/waiting state; deterministic local features remain usable and no hidden provider fallback occurs.
+
+The Conversation composer includes bounded image and voice controls. Images accept PNG/JPEG/WebP up to 4 MB and use the existing multimodal capability manager without persisting the raw upload. Voice requires the same authenticated `conversation` device scope, records at most 30 seconds in browser memory, converts the captured signal to 24 kHz mono PCM16, and streams bounded frames through `/api/voice/sessions`. The selected provider's transcript still enters `ConversationService -> PersonalAgent -> policy/approval -> verification`; no provider audio is exposed before that boundary authorizes it. If a voice action reaches `WAITING`, the browser retains only the opaque live VoiceSession reference, presents the normal approval UI, and plays the provider's authorized continuation only after the persisted approval resumes the exact goal. Raw microphone PCM is not stored by the Personal Core.
+
+Personal Core shutdown calls the existing `ConnectorManager.close()` lifecycle before process exit, including the pairing-only CLI path, so external API sessions and privileged local connector sessions are not intentionally left open by the server lifecycle.
 
 ## Personal Operations Surface
 

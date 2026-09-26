@@ -23,16 +23,18 @@ def png(width=1024,height=1024):
     return b'\x89PNG\r\n\x1a\n'+c(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+c(b'IDAT',zlib.compress(raw))+c(b'IEND',b'')
 
 def jpeg_container(width=1024,height=1024):
-    # Structurally valid-enough JPEG container for the bounded container parser: SOI, SOF0, SOS, payload, EOI.
-    sof=b'\xff\xc0'+struct.pack('>H',17)+b'\x08'+struct.pack('>HH',height,width)+b'\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00'
-    sos=b'\xff\xda'+struct.pack('>H',12)+b'\x03\x01\x00\x02\x11\x03\x11\x00\x3f\x00'+b'\x10'*64
-    return b'\xff\xd8'+sof+sos+b'\xff\xd9'
+    # Use a real encoded JPEG so integrity tests cover decoding, not header acceptance.
+    import io
+    from PIL import Image
+    output=io.BytesIO()
+    with Image.new('RGB',(width,height),(32,128,192)) as picture:picture.save(output,format='JPEG')
+    return output.getvalue()
 
 class HTTPResponse:
     def __init__(self,value,headers=None,raw=False):self.raw=value if raw else json.dumps(value).encode();self.headers=headers or {}
     def __enter__(self):return self
     def __exit__(self,*a):return False
-    def read(self):return self.raw
+    def read(self,n=-1):return self.raw if n<0 else self.raw[:n]
 
 class FakeImageAdapter(ModelAdapter):
     provider='nvidia';model_id='black-forest-labs/flux.2-klein-4b';supported_modalities=frozenset({'text'})

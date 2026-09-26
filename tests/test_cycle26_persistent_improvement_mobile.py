@@ -22,7 +22,7 @@ class Cycle26Tests(unittest.TestCase):
             p=Path(d)/'x.db';s=Gen2Store(p);c=NotificationCenter(s);n=c.create('task','Title','Body');c.read(n.notification_id);r=NotificationCenter(Gen2Store(p));self.assertEqual(r.items[n.notification_id].status,'READ')
     def test_self_improvement_persists_full_gated_lifecycle_and_install_verification(self):
         with tempfile.TemporaryDirectory() as d:
-            p=Path(d)/'x.db';s=Gen2Store(p);pipe=ControlledImprovementPipeline(s,installer=lambda c:{'registered':True,'id':c.candidate_id});gap=pipe.discover('context','missing source');c=pipe.propose('context','add source',gap=gap['gap']);pipe.implement(c.candidate_id,{'commit':'abc'});pipe.record_tests(c.candidate_id,True);pipe.review(c.candidate_id,True)
+            p=Path(d)/'x.db';s=Gen2Store(p);pipe=ControlledImprovementPipeline(s,installer=lambda c:{'registered':True,'id':c.candidate_id});gap=pipe.discover('context','missing source');c=pipe.propose('context','add source',gap=gap['gap']);pipe.implement(c.candidate_id,{'commit':'abc'});pipe.record_tests(c.candidate_id,True);pipe.record_security(c.candidate_id,True,{'verified':True,'method':'bounded security review'});pipe.review(c.candidate_id,True)
             with self.assertRaises(PermissionError):pipe.approve(c.candidate_id,'model')
             pipe.approve(c.candidate_id,'human');out=pipe.install(c.candidate_id);self.assertTrue(out['verification']['registered']);recovered=ControlledImprovementPipeline(Gen2Store(p));self.assertEqual(recovered.items[c.candidate_id].status,'INSTALLED')
     def test_mobile_lifecycle_complete_with_injected_target_and_fails_closed_without_target(self):

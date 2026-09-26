@@ -10,6 +10,7 @@ READ_CAPABILITIES={
     'project_search',
     'project_tasks',
     'learning_progress',
+    'learning_plan_inspect',
     'research_workspace',
     'engineering_inspect',
     'content_search',
@@ -33,8 +34,17 @@ READ_CAPABILITIES={
     'connector_capabilities',
     'connector_health',
     'connector_read',
+    'gmail.read',
+    'calendar.read',
+    'drive.read',
+    'github.read',
+    'browser.navigate',
+    'browser.read',
+    'linux.inspect',
+    'computer.read',
+    'mobile.read',
 }
-WRITE_CAPABILITIES={'connector_invoke','connector_write','image_generate','notification_delivery_retry','notification_acknowledge','daily_brief_update','daily_brief_close','document_ingest','ros2_sim_move','memory_write','workspace_scaffold','workspace_verify','workspace_package','workspace_test','agent_install','automation_create','automation_pause','automation_resume','automation_cancel','automation_run_now'}
+WRITE_CAPABILITIES={'learning_plan_create','learning_assess','mobile.act','computer.act','linux.execute','browser.interact','connector_invoke','connector_write','image_generate','notification_delivery_retry','notification_acknowledge','daily_brief_update','daily_brief_close','document_ingest','ros2_sim_move','memory_write','workspace_scaffold','workspace_verify','workspace_package','workspace_test','agent_install','automation_create','automation_pause','automation_resume','automation_cancel','automation_disable','automation_run_now'}
 
 class PolicyEngine:
     def evaluate(self,capability:str,subject:str,scope:str,timestamp:str)->tuple[Permission,RiskEvaluation]:

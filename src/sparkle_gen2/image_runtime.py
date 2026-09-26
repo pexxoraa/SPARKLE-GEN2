@@ -25,48 +25,22 @@ class ImageGenerationResult:
     def to_dict(self):return asdict(self)
 
 def inspect_image_bytes(data:bytes)->GeneratedImageInfo:
+    import io,warnings
+    from PIL import Image
     if not isinstance(data,(bytes,bytearray)) or not data or len(data)>MAX_IMAGE_BYTES:raise ValueError('generated image byte size invalid')
-    raw=bytes(data);width=height=0;media=None
-    if raw.startswith(b'\x89PNG\r\n\x1a\n'):
-        if len(raw)<33:raise ValueError('PNG image is truncated')
-        pos=8;seen_ihdr=False;seen_idat=False;seen_iend=False
-        while pos+12<=len(raw):
-            length=int.from_bytes(raw[pos:pos+4],'big');kind=raw[pos+4:pos+8];end=pos+12+length
-            if length<0 or end>len(raw):raise ValueError('PNG chunk length invalid')
-            payload=raw[pos+8:pos+8+length]
-            if kind==b'IHDR':
-                if seen_ihdr or length!=13:raise ValueError('PNG IHDR invalid')
-                width=int.from_bytes(payload[:4],'big');height=int.from_bytes(payload[4:8],'big');seen_ihdr=True
-            elif kind==b'IDAT' and length>0:seen_idat=True
-            elif kind==b'IEND':
-                if length!=0:raise ValueError('PNG IEND invalid')
-                seen_iend=True;break
-            pos=end
-        if not (seen_ihdr and seen_idat and seen_iend) or width<1 or height<1:raise ValueError('PNG image structure invalid')
-        media='image/png'
-    elif raw.startswith(b'\xff\xd8'):
-        if len(raw)<64 or not raw.endswith(b'\xff\xd9'):raise ValueError('JPEG image is truncated')
-        pos=2;sof={0xC0,0xC1,0xC2,0xC3,0xC5,0xC6,0xC7,0xC9,0xCA,0xCB,0xCD,0xCE,0xCF};seen_sof=False;scan_payload=False
-        while pos<len(raw)-1:
-            if raw[pos]!=0xFF:pos+=1;continue
-            while pos<len(raw) and raw[pos]==0xFF:pos+=1
-            if pos>=len(raw):break
-            marker=raw[pos];pos+=1
-            if marker in {0xD8,0xD9,0x01} or 0xD0<=marker<=0xD7:continue
-            if pos+2>len(raw):raise ValueError('JPEG segment truncated')
-            length=int.from_bytes(raw[pos:pos+2],'big')
-            if length<2 or pos+length>len(raw):raise ValueError('JPEG segment length invalid')
-            if marker in sof:
-                if length<7:raise ValueError('JPEG SOF invalid')
-                height=int.from_bytes(raw[pos+3:pos+5],'big');width=int.from_bytes(raw[pos+5:pos+7],'big');seen_sof=True
-            if marker==0xDA:
-                data_start=pos+length
-                scan_payload=data_start<len(raw)-2
-                break
-            pos+=length
-        if not seen_sof or width<1 or height<1 or not scan_payload:raise ValueError('JPEG image structure invalid')
-        media='image/jpeg'
-    else:raise ValueError('unsupported generated image format')
+    raw=bytes(data)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error',Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(raw)) as picture:
+                if picture.format not in {'PNG','JPEG'}:raise ValueError('unsupported generated image format')
+                width,height=picture.size;media='image/png' if picture.format=='PNG' else 'image/jpeg'
+                if width<1 or height<1 or width*height>4_194_304:raise ValueError('generated image pixel limit exceeded')
+                if getattr(picture,'n_frames',1)!=1:raise ValueError('animated images are unsupported')
+                picture.verify()
+            with Image.open(io.BytesIO(raw)) as picture:picture.load()
+    except Exception as exc:
+        raise ValueError('generated image integrity invalid') from None
     return GeneratedImageInfo(media,width,height,len(raw),hashlib.sha256(raw).hexdigest())
 
 class ImageGenerationService:

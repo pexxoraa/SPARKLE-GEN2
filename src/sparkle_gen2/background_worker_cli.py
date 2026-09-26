@@ -6,7 +6,7 @@ from .worker import BackgroundWorker
 from .notifications import NotificationIntelligenceService
 
 def build_worker():
-    store,agent,_=build_components();service=BackgroundTaskService(store,lambda:agent,notifier=NotificationIntelligenceService(store));return BackgroundWorker(service)
+    store,agent,_=build_components(activate_external_connectors=True);service=BackgroundTaskService(store,lambda:agent,notifier=NotificationIntelligenceService(store));return BackgroundWorker(service)
 
 def main(argv=None):
     p=argparse.ArgumentParser(prog='sparkle-background-worker');p.add_argument('--once',action='store_true');p.add_argument('--interval',type=float,default=2.0);p.add_argument('--max-tasks',type=int,default=20);a=p.parse_args(argv)

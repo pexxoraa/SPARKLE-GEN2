@@ -11,6 +11,10 @@ ROS2_MOVE_DEF={'name':'ros2_sim_move','description':'Move the approved ROS2 simu
 class EnvironmentGateway:
     """Adds typed Gen-2 environment tools while delegating all Gen-1 behavior unchanged."""
     def __init__(self,base,*,ros2=None):self.base=base;self.ros2=ros2
+    @property
+    def model_manager(self):return getattr(self.base,'model_manager',None)
+    @property
+    def capability_router(self):return getattr(self.base,'capability_router',None)
     def retrieve_context(self,*a,**k):return self.base.retrieve_context(*a,**k)
     def plan(self,*a,**k):return self.base.plan(*a,**k)
     def approval_status(self,*a,**k):return self.base.approval_status(*a,**k)

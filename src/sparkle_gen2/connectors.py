@@ -102,8 +102,8 @@ class ConnectorManager:
         if not isinstance(descriptor,ConnectorDescriptor):raise TypeError('descriptor required')
         cid=descriptor.connector_id
         if not cid or cid in self._descriptors:raise ValueError('duplicate connector')
-        caps=list(descriptor.capabilities);scopes=[x.scope for x in caps];ops=[x.operation for x in caps]
-        if not caps or len(scopes)!=len(set(scopes)) or len(ops)!=len(set(ops)):raise ValueError('connector capabilities/scopes/operations must be unique')
+        caps=list(descriptor.capabilities);ops=[x.operation for x in caps];cap_names=[x.capability for x in caps]
+        if not caps or len(ops)!=len(set(ops)) or len(cap_names)!=len(set(cap_names)):raise ValueError('connector capabilities and operations must be unique')
         self._descriptors[cid]=descriptor
         if adapter is not None:self._adapters[cid]=adapter
         return descriptor.to_dict()
@@ -125,10 +125,14 @@ class ConnectorManager:
     def discover(self,owner_user_id=None):
         owner=owner_user_id or self.default_owner;out=[]
         for cid in sorted(self._descriptors):
-            d=self._descriptors[cid];st=self._state(cid,owner);row=d.to_dict()|{'name':cid,'scopes':[x.scope for x in d.capabilities],'status':self._public_status(d,st),'state':st.state.value,'authorization_state':st.authorization_state.value,'granted_scopes':list(st.granted_scopes),'configured':self._configured(d),'connected':cid in self._adapters and st.state in {ConnectorLifecycleState.CONNECTED,ConnectorLifecycleState.HEALTHY,ConnectorLifecycleState.DEGRADED},'authorized':st.authorization_state in {ConnectorAuthorizationState.NOT_REQUIRED,ConnectorAuthorizationState.AUTHORIZED},'healthy':st.state==ConnectorLifecycleState.HEALTHY}
+            d=self._descriptors[cid];st=self._state(cid,owner);row=d.to_dict()|{'name':cid,'scopes':sorted({x.scope for x in d.capabilities}),'status':self._public_status(d,st),'state':st.state.value,'authorization_state':st.authorization_state.value,'granted_scopes':list(st.granted_scopes),'configured':self._configured(d),'connected':cid in self._adapters and st.state in {ConnectorLifecycleState.CONNECTED,ConnectorLifecycleState.HEALTHY,ConnectorLifecycleState.DEGRADED},'authorized':st.authorization_state in {ConnectorAuthorizationState.NOT_REQUIRED,ConnectorAuthorizationState.AUTHORIZED},'healthy':st.state==ConnectorLifecycleState.HEALTHY}
             out.append(row)
         return out
     def _configured(self,d):
+        adapter=self._adapters.get(d.connector_id);configured=getattr(adapter,'configured',None)
+        if callable(configured):
+            try:return bool(configured())
+            except Exception:return False
         if d.secret_refs:
             if self.secrets is None:return False
             try:return all(self.secrets.status(d.secret_refs).values())
@@ -180,7 +184,13 @@ class ConnectorManager:
             else:st.state=ConnectorLifecycleState.UNAVAILABLE;reason='connector_adapter_unavailable'
             st.last_checked=stamp;st.last_error=reason;self._save_state(st);return {'name':name,'connector_id':name,'status':'EXTERNALLY_BLOCKED' if d.external_dependency else st.state.value,'state':st.state.value,'health':'UNAVAILABLE','authorization_state':st.authorization_state.value,'configured':self._configured(d),'granted_scopes':list(st.granted_scopes),'dependency':d.external_dependency,'reason':reason,'owner_user_id':owner}
         try:
-            detail=ad.health();ok=bool(detail.get('ok',detail.get('status') in {'HEALTHY','CONNECTED','AVAILABLE'})) if isinstance(detail,dict) else False;st.state=ConnectorLifecycleState.HEALTHY if ok else ConnectorLifecycleState.DEGRADED;st.last_error=None if ok else 'connector_health_degraded';health=ConnectorHealthState.HEALTHY if ok else ConnectorHealthState.DEGRADED
+            detail=ad.health();ok=bool(detail.get('ok',detail.get('status') in {'HEALTHY','CONNECTED','AVAILABLE'})) if isinstance(detail,dict) else False
+            auth_value=detail.get('authorization_state') if isinstance(detail,dict) else None
+            if auth_value in {x.value for x in ConnectorAuthorizationState}:st.authorization_state=ConnectorAuthorizationState(auth_value)
+            if st.authorization_state==ConnectorAuthorizationState.REVOKED:st.state=ConnectorLifecycleState.REVOKED;st.last_error='authorization_revoked';health=ConnectorHealthState.BLOCKED
+            elif d.authorization_mode!=ConnectorAuthorizationMode.NONE and st.authorization_state in {ConnectorAuthorizationState.NOT_CONFIGURED,ConnectorAuthorizationState.REQUIRED,ConnectorAuthorizationState.PENDING,ConnectorAuthorizationState.EXPIRED}:st.state=ConnectorLifecycleState.AUTH_REQUIRED;st.last_error=str((detail or {}).get('error_category') or 'authorization_required');health=ConnectorHealthState.UNAVAILABLE
+            elif d.authorization_mode!=ConnectorAuthorizationMode.NONE and st.authorization_state==ConnectorAuthorizationState.FAILED:st.state=ConnectorLifecycleState.FAILED;st.last_error=str((detail or {}).get('error_category') or 'authorization_failed');health=ConnectorHealthState.FAILED
+            else:st.state=ConnectorLifecycleState.HEALTHY if ok else ConnectorLifecycleState.DEGRADED;st.last_error=None if ok else str((detail or {}).get('error_category') or 'connector_health_degraded');health=ConnectorHealthState.HEALTHY if ok else ConnectorHealthState.DEGRADED
         except Exception as exc:
             detail={};st.state=ConnectorLifecycleState.FAILED;st.last_error=type(exc).__name__;health=ConnectorHealthState.FAILED
         st.last_checked=stamp;self._save_state(st);public_status='CONNECTED' if name in self._legacy and st.state==ConnectorLifecycleState.HEALTHY else st.state.value;return {'name':name,'connector_id':name,'status':public_status,'state':st.state.value,'health':health.value,'authorization_state':st.authorization_state.value,'configured':self._configured(d),'granted_scopes':list(st.granted_scopes),'dependency':d.external_dependency,'detail':detail,'owner_user_id':owner,'last_checked':stamp,'reason':st.last_error}
@@ -211,7 +221,12 @@ class ConnectorManager:
         owner=owner_user_id or self.default_owner;d=self._descriptors[name];cap=self._capability(name,operation,required_scope);arguments=self._clean_args(payload);classification=str(classification).upper()
         if classification not in {'PUBLIC','PRIVATE','SENSITIVE','HIGHLY_SENSITIVE','DEVICE_CONTROL'}:raise ValueError('invalid connector classification')
         if d.external_dependency and classification in PROTECTED_EXTERNAL:raise PermissionError('classification_prohibits_external_connector_transmission')
-        if d.device_scoped and not device_id:raise PermissionError('device_scoped_connector_requires_device_identity')
+        ad=self._adapters.get(name);bound_device=getattr(ad,'bound_device_id',None) if ad is not None else None
+        if callable(bound_device):bound_device=bound_device()
+        if d.device_scoped:
+            if device_id is None and isinstance(bound_device,str) and bound_device:device_id=bound_device
+            if not device_id:raise PermissionError('device_scoped_connector_requires_device_identity')
+            if isinstance(bound_device,str) and bound_device and device_id!=bound_device:raise PermissionError('device_scoped_connector_identity_mismatch')
         st=self._state(name,owner)
         if st.state==ConnectorLifecycleState.REVOKED:raise PermissionError('connector_revoked')
         if d.authorization_mode!=ConnectorAuthorizationMode.NONE:
@@ -223,27 +238,46 @@ class ConnectorManager:
             permission,risk_eval=self.policy.evaluate(cap.policy_capability,owner,f'{name}:{operation}',now())
             if permission.effect==PermissionEffect.DENY:raise PermissionError('connector_policy_denied')
             if permission.effect==PermissionEffect.REQUIRE_APPROVAL and not self._approval_ok(approval,goal_id=goal_id,task_run_id=task_run_id):raise PermissionError('connector_approval_required')
-        ad=self._adapters.get(name)
         if ad is None:raise RuntimeError(f'external_dependency:{d.external_dependency or name}')
         digest=hashlib.sha256(self._canon(arguments).encode()).hexdigest();rid=request_id or 'conn_'+hashlib.sha256(self._canon({'owner':owner,'connector':name,'operation':operation,'goal_id':goal_id,'task_run_id':task_run_id,'trace_id':trace_id,'arguments_digest':digest,'device_id':device_id}).encode()).hexdigest()[:32];existing=next((x for x in self.invocations(owner_user_id=owner,connector_id=name) if x.get('request_id')==rid and x.get('verification_status')=='VERIFIED'),None)
         if existing is not None and cap.mode!=ConnectorOperationMode.READ:return {'connector':name,'operation':operation,'request_id':rid,'status':'VERIFIED','result':existing.get('result_summary',{}),'verification':existing.get('verification',{}),'reused':True,'provenance':existing.get('provenance',{})}
         auth_state='ALLOW' if permission is None or permission.effect==PermissionEffect.ALLOW else 'APPROVED';approval_ref=getattr(approval,'approval_id',None) if approval is not None else None;inv=ConnectorInvocation(rid,name,operation,owner,goal_id,task_run_id,trace_id,classification,getattr(getattr(risk_eval,'level',None),'value',risk),auth_state,approval_ref,digest,now());base=inv.to_dict()|{'capability':cap.capability,'scope':cap.scope,'mode':cap.mode.value,'device_id':device_id,'status':'INVOKING','verification_status':'PENDING','external_reference':None,'result_summary':{},'verification':{},'provenance':{'provider_system':d.provider_system,'policy_capability':cap.policy_capability,'secret_refs':list(d.secret_refs)}};self._save_invocation(base)
-        try:result=ad.invoke(operation,arguments)
+        try:
+            contextual=getattr(ad,'invoke_with_context',None);result=contextual(operation,arguments,owner_user_id=owner,goal_id=goal_id,task_run_id=task_run_id,trace_id=trace_id,classification=classification,approval=approval,device_id=device_id) if contextual is not None else ad.invoke(operation,arguments)
         except TimeoutError as exc:
             failed=base|{'status':'FAILED','verification_status':'FAILED','failure':{'type':'TimeoutError','category':'timeout'}};self._save_invocation(failed);raise
         except Exception as exc:
-            failed=base|{'status':'FAILED','verification_status':'FAILED','failure':{'type':type(exc).__name__,'category':'connector_failure'}};self._save_invocation(failed);raise
-        verification=self.verify(name,operation,result,request_id=rid,owner_user_id=owner);status='VERIFIED' if verification.get('verified') else 'FAILED';summary={'keys':sorted(result)[:30]} if isinstance(result,dict) else {'type':type(result).__name__};external_ref=result.get('external_request_id') if isinstance(result,dict) else None;stored=base|{'status':status,'verification_status':'VERIFIED' if verification.get('verified') else 'FAILED','external_reference':external_ref,'result_summary':summary,'verification':verification,'provenance':base['provenance']|{'verified_at':now()}};self._save_invocation(stored)
+            failed=base|{'status':'FAILED','verification_status':'FAILED','failure':{'type':type(exc).__name__,'category':str(getattr(exc,'category','connector_failure'))}};self._save_invocation(failed);raise
+        verification=self.verify(name,operation,result,request_id=rid,owner_user_id=owner);status='VERIFIED' if verification.get('verified') else 'FAILED';summary={'keys':sorted(result)[:30]} if isinstance(result,dict) else {'type':type(result).__name__};external_ref=(result.get('external_request_id') or result.get('provider_reference')) if isinstance(result,dict) else None;stored=base|{'status':status,'verification_status':'VERIFIED' if verification.get('verified') else 'FAILED','external_reference':external_ref,'result_summary':summary,'verification':verification,'provenance':base['provenance']|{'verified_at':now()}};self._save_invocation(stored)
         return {'connector':name,'operation':operation,'request_id':rid,'status':status,'result':result,'verification':verification,'reused':False,'provenance':stored['provenance']}
+    def invoke_read(self,name,operation,payload,required_scope=None,**context):
+        cap=self._capability(name,operation,required_scope)
+        if cap.mode!=ConnectorOperationMode.READ:raise PermissionError('connector_read_tool_cannot_invoke_mutation')
+        return self.invoke(name,operation,payload,required_scope,**context)
     def verify(self,name,operation,result,*,request_id=None,owner_user_id=None):
         ad=self._adapters.get(name)
         if ad is None:raise RuntimeError(f'external_dependency:{self._descriptors[name].external_dependency or name}')
-        verifier=getattr(ad,'verify',None)
-        if verifier is None:return {'verified':False,'reason':'adapter_has_no_verifier','method':'none'}
-        evidence=verifier(operation,result)
+        contextual=getattr(ad,'verify_with_context',None);verifier=getattr(ad,'verify',None)
+        if contextual is None and verifier is None:return {'verified':False,'reason':'adapter_has_no_verifier','method':'none'}
+        evidence=contextual(operation,result,owner_user_id=owner_user_id or self.default_owner,request_id=request_id) if contextual is not None else verifier(operation,result)
         if not isinstance(evidence,dict) or evidence.get('verified') is not True:return {'verified':False,'reason':'verification_failed','method':str((evidence or {}).get('method','adapter_verifier')) if isinstance(evidence,dict) else 'adapter_verifier'}
         return dict(evidence)|({'request_id':request_id} if request_id else {})
+    def close(self):
+        closed=[]
+        for name,adapter in list(self._adapters.items()):
+            closer=getattr(adapter,'close',None)
+            if not callable(closer):continue
+            try:
+                closer();closed.append(name)
+            except Exception:
+                continue
+        return {'closed_connectors':sorted(closed)}
+
     def revoke(self,name,*,owner_user_id=None,actor='trusted_system'):
-        owner=owner_user_id or self.default_owner;st=self._state(name,owner);previous=st.state.value;st.granted_scopes=[];st.authorization_state=ConnectorAuthorizationState.REVOKED;st.state=ConnectorLifecycleState.REVOKED;st.connected_at=None;st.last_checked=now();st.last_error=None;self._save_state(st)
+        owner=owner_user_id or self.default_owner;st=self._state(name,owner);previous=st.state.value;adapter=self._adapters.get(name);closer=getattr(adapter,'close',None)
+        if callable(closer):
+            try:closer()
+            except Exception:pass
+        st.granted_scopes=[];st.authorization_state=ConnectorAuthorizationState.REVOKED;st.state=ConnectorLifecycleState.REVOKED;st.connected_at=None;st.last_checked=now();st.last_error=None;self._save_state(st)
         if name in self._legacy:self._adapters.pop(name,None)
         return ConnectorRevocation(name,owner,now(),actor,previous).to_dict()

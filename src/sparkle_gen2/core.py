@@ -8,19 +8,21 @@ from .failures import FailureClassifier
 from .delegation import DelegationRequest,SpecialistDelegationService
 from .models import *
 from .memory_orchestration import MemoryCandidateService
+from .learning_orchestration import LearningOrchestrator
 from .automation_orchestration import AutomationOrchestrator
 from .observability import TraceRecorder
 from .planner import Gen1PlannerModel,PlannerError,PlannerModel
 from .policy import PolicyEngine
+from .permission_center import PermissionCenter
 from .storage import Gen2Store
 from .validation import PlanValidationError,PlanValidator
 
 class PersonalAgent:
-    def __init__(self,store:Gen2Store,gen1:Gen1Gateway,*,planner:PlannerModel|None=None,policy:PolicyEngine|None=None,context_provider=None,connector_manager=None,document_service=None,image_service=None,perception_service=None,daily_os_service=None,operations_service=None,notification_service=None,tracer=None,max_iterations:int=12,planner_retries:int=1,max_replans:int=1):
+    def __init__(self,store:Gen2Store,gen1:Gen1Gateway,*,planner:PlannerModel|None=None,policy:PolicyEngine|None=None,context_provider=None,connector_manager=None,document_service=None,image_service=None,perception_service=None,daily_os_service=None,operations_service=None,notification_service=None,learning_service=None,tracer=None,max_iterations:int=12,planner_retries:int=1,max_replans:int=1):
         if not 1<=max_iterations<=100:raise ValueError('max_iterations out of range')
         if not 0<=planner_retries<=2:raise ValueError('planner_retries out of range')
         if not 0<=max_replans<=3:raise ValueError('max_replans out of range')
-        self.store=store;self.gen1=gen1;self.planner=planner or Gen1PlannerModel(gen1);self.policy=policy or PolicyEngine();self.context_provider=context_provider;self.connectors=connector_manager;self.documents=document_service;self.images=image_service;self.perception=perception_service;self.daily_os=daily_os_service;self.operations=operations_service;self.notifications=notification_service;self.notification_delivery=getattr(notification_service,'delivery',None);self.traces=tracer or TraceRecorder(store);self.memory=MemoryCandidateService(store,gen1,self.policy);self.delegation=SpecialistDelegationService(store,gen1,self.policy);self.failures=FailureClassifier();self.max_iterations=max_iterations;self.planner_retries=planner_retries;self.max_replans=max_replans
+        self.store=store;self.gen1=gen1;self.planner=planner or Gen1PlannerModel(gen1);self.policy=policy or PolicyEngine();self.context_provider=context_provider;self.connectors=connector_manager;self.documents=document_service;self.images=image_service;self.perception=perception_service;self.daily_os=daily_os_service;self.operations=operations_service;self.notifications=notification_service;self.notification_delivery=getattr(notification_service,'delivery',None);self.learning=learning_service;self.traces=tracer or TraceRecorder(store);self.memory=MemoryCandidateService(store,gen1,self.policy);self.delegation=SpecialistDelegationService(store,gen1,self.policy);self.failures=FailureClassifier();self.max_iterations=max_iterations;self.planner_retries=planner_retries;self.max_replans=max_replans
         self.automation=AutomationOrchestrator(store,gen1,lambda:self) if AutomationOrchestrator.available(gen1) else None
     def _goal(self,request,user_id='user'):
         stamp=now();return Goal(uuid.uuid4().hex,request.strip(),' '.join(request.strip().split()),success_criteria=[],context_requirements=['relevant Gen-1 context'],created_at=stamp,updated_at=stamp,status=GoalStatus.CREATED,user_id=user_id)
@@ -48,7 +50,8 @@ class PersonalAgent:
                 {'name':'connector_inspect','description':'Inspect one registered connector, its operations, authorization state, and availability. Read-only.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'}},'required':['connector_id'],'additionalProperties':False}},
                 {'name':'connector_capabilities','description':'List typed operations/capabilities for one connector. Read-only.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'}},'required':['connector_id'],'additionalProperties':False}},
                 {'name':'connector_health','description':'Recheck one connector through its existing adapter/transport and return bounded health evidence. Read-only.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'}},'required':['connector_id'],'additionalProperties':False}},
-                {'name':'connector_invoke','description':'Invoke one exact registered connector operation through ConnectorManager. Requires human approval at the PersonalAgent boundary and still obeys underlying connector policy/authorization/verification.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'},'operation':{'type':'string'},'arguments':{'type':'object'},'classification':{'type':'string','enum':['PUBLIC','PRIVATE','SENSITIVE','HIGHLY_SENSITIVE','DEVICE_CONTROL']},'device_id':{'type':'string'}},'required':['connector_id','operation','arguments'],'additionalProperties':False}},
+                {'name':'connector_read','description':'Invoke one exact registered READ operation through ConnectorManager. It cannot invoke connector writes/control and still obeys connector authorization, owner isolation, classification, central policy, and verification.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'},'operation':{'type':'string'},'arguments':{'type':'object'},'classification':{'type':'string','enum':['PUBLIC','PRIVATE']}},'required':['connector_id','operation','arguments'],'additionalProperties':False}},
+                {'name':'connector_invoke','description':'Invoke one exact registered connector mutation/control operation through ConnectorManager. Requires human approval at the PersonalAgent boundary and still obeys underlying connector policy/authorization/verification.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'},'operation':{'type':'string'},'arguments':{'type':'object'},'classification':{'type':'string','enum':['PUBLIC','PRIVATE','SENSITIVE','HIGHLY_SENSITIVE','DEVICE_CONTROL']},'device_id':{'type':'string'}},'required':['connector_id','operation','arguments'],'additionalProperties':False}},
             ]
             for d in defs:
                 if d['name'] not in tools:tools.append(d['name']);definitions.append(d)
@@ -72,14 +75,69 @@ class PersonalAgent:
                 tools.append('document_ingest');definitions.append({'name':'document_ingest','description':'Validate, extract, structure, and persist one named file already present in the private Gen-2 documents root. This is approval-gated and never accepts arbitrary host paths.','parameters':{'type':'object','properties':{'filename':{'type':'string'},'classification':{'type':'string','enum':['PUBLIC','PRIVATE','SENSITIVE','HIGHLY_SENSITIVE','DEVICE_CONTROL']}},'required':['filename'],'additionalProperties':False}})
             if 'document_search' not in tools:
                 tools.append('document_search');definitions.append({'name':'document_search','description':'Search READY documents owned by the current user using bounded deterministic lexical retrieval with source provenance.','parameters':{'type':'object','properties':{'query':{'type':'string'},'document_id':{'type':'string'},'k':{'type':'integer','minimum':1,'maximum':20}},'required':['query'],'additionalProperties':False}})
+        if self.learning is not None:
+            learning_defs=[
+                {'name':'learning_plan_create','description':'Create one bounded persistent learning curriculum from explicit approved units and verified Gen-1 progress evidence when available. Requires approval.','parameters':{'type':'object','properties':{'subject':{'type':'string'},'objective':{'type':'string'},'units':{'type':'array','items':{'type':'string'},'minItems':1,'maxItems':20}},'required':['subject','objective','units'],'additionalProperties':False}},
+                {'name':'learning_plan_inspect','description':'Inspect one owner-scoped persisted adaptive learning plan, weaknesses, retraining state, and provenance.','parameters':{'type':'object','properties':{'plan_id':{'type':'string'}},'required':['plan_id'],'additionalProperties':False}},
+                {'name':'learning_assess','description':'Record one exact human-approved bounded assessment score and evidence reference; mastery/weakness is computed deterministically. Requires approval.','parameters':{'type':'object','properties':{'plan_id':{'type':'string'},'unit_id':{'type':'string'},'score':{'type':'number','minimum':0,'maximum':1},'evidence_reference':{'type':'string'}},'required':['plan_id','unit_id','score','evidence_reference'],'additionalProperties':False}},
+            ]
+            for d in learning_defs:
+                if d['name'] not in tools:tools.append(d['name']);definitions.append(d)
         if self.automation is not None:
             auto_defs=[
                 {'name':'automation_create','description':'Create a bounded persistent automation that launches a normal Gen-2 goal through the reliable automation/background boundary.','parameters':{'type':'object','properties':{'name':{'type':'string'},'trigger_type':{'type':'string','enum':['scheduled','event','condition','deadline']},'prompt':{'type':'string'},'schedule_kind':{'type':'string','enum':['once','daily','weekly']},'schedule':{'type':'string'},'next_run_at':{'type':'string'},'condition':{'type':'object'},'required_capabilities':{'type':'array','items':{'type':'string'}},'max_attempts':{'type':'integer'},'time_budget_seconds':{'type':'number'}},'required':['name','trigger_type','prompt'],'additionalProperties':False}},
-                *[{'name':f'automation_{op}','description':f'{op.title()} a Gen-2-owned automation through the authoritative Gen-1 automation store.','parameters':{'type':'object','properties':{'automation_id':{'type':'integer'}},'required':['automation_id'],'additionalProperties':False}} for op in ('pause','resume','cancel','run_now')],
+                *[{'name':f'automation_{op}','description':f'{op.title()} a Gen-2-owned automation through the authoritative Gen-1 automation store.','parameters':{'type':'object','properties':{'automation_id':{'type':'integer'}},'required':['automation_id'],'additionalProperties':False}} for op in ('pause','resume','cancel','disable','run_now')],
             ]
             for d in auto_defs:
                 if d['name'] not in tools:tools.append(d['name']);definitions.append(d)
         base['tools']=sorted(set(tools));base['tool_definitions']=definitions;return base
+    @staticmethod
+    def _schema_argument_error(step,schemas):
+        """Return a deterministic argument-validation error, or None."""
+        args=step.arguments
+        if not isinstance(args,dict):
+            return {'error':'invalid_arguments','reason':'tool arguments must be an object'}
+        schema=schemas.get(step.preferred_tool) if isinstance(schemas,dict) else None
+        if not isinstance(schema,dict):
+            return None
+        parameters=schema.get('parameters') or {}
+        if not isinstance(parameters,dict):
+            return None
+        properties=parameters.get('properties') or {}
+        if not isinstance(properties,dict):
+            properties={}
+        required=parameters.get('required') or []
+        for name in required:
+            if name not in args:
+                return {'error':'missing_required_argument','argument':name}
+            value=args.get(name)
+            if value is None or (isinstance(value,str) and not value.strip()):
+                return {'error':'missing_required_argument','argument':name}
+        if parameters.get('additionalProperties') is False:
+            extras=sorted(set(args)-set(properties))
+            if extras:
+                return {'error':'unexpected_arguments','arguments':extras}
+        return None
+
+    def _validate_plan_arguments(self,plan,schemas):
+        """Reject planner output with missing/unknown tool arguments before execution."""
+        errors=[]
+        for step in plan.steps:
+            error=self._schema_argument_error(step,schemas)
+            if error:
+                errors.append({'step_id':step.step_id,'tool':step.preferred_tool,**error})
+        if errors:
+            raise PlanValidationError('invalid_tool_arguments:'+json.dumps(errors,sort_keys=True,separators=(',',':')))
+
+    def _block_invalid_arguments(self,goal,plan,run,step,error):
+        """Terminal fail-closed handling for malformed persisted/executable steps."""
+        error=dict(error)
+        step.result={'output':error,'verification':{'verified':False,'method':'required-argument/schema guard','reason':error.get('error','invalid_arguments')}}
+        step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED'
+        self.store.event(goal.goal_id,'tool_arguments_rejected',{'step_id':step.step_id,'tool':step.preferred_tool,**error},now())
+        self.traces.record('validation',step.preferred_tool,'BLOCKED',goal_id=goal.goal_id,task_run_id=run.task_run_id,trace_id=run.trace_id,correlation={'step_id':step.step_id},detail=error)
+        self._persist(goal,plan,run)
+        return self.report(goal,plan,run)
     def start(self,request,*,user_id='user'):
         if not isinstance(request,str) or not request.strip():raise ValueError('request is required')
         if not isinstance(user_id,str) or not user_id.strip() or len(user_id)>256:raise ValueError('user_id is invalid')
@@ -88,7 +146,9 @@ class PersonalAgent:
         context=self.gen1.retrieve_context(request,goal.context_requirements)
         if self.context_provider is not None:
             try:
-                richer=self.context_provider.gather(request);context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
+                try:richer=self.context_provider.gather(request,owner_user_id=goal.user_id)
+                except TypeError:richer=self.context_provider.gather(request)
+                context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
             except Exception as exc:self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
         if self.documents is not None:
             try:
@@ -97,6 +157,8 @@ class PersonalAgent:
                     context={'source':'documents+'+str(context.get('source','')),'rendered':('DOCUMENT_EVIDENCE:\n'+docctx['rendered']+'\nOTHER_CONTEXT:\n'+str(context.get('rendered','')))[:10000],'document_items':docctx['items']}
                     self.store.event(goal.goal_id,'document_context_retrieved',{'item_count':docctx['item_count'],'document_ids':sorted({x['provenance']['document_id'] for x in docctx['items']})},now())
             except Exception as exc:self.store.event(goal.goal_id,'document_context_failed',{'error_type':type(exc).__name__},now())
+        remembered=self.memory.recall(request,owner_user_id=user_id,limit=5)
+        if remembered:context={'source':'completion_memory+'+str(context.get('source','')),'rendered':(str(remembered)+'\n'+str(context.get('rendered','')))[:6000]}
         health=self._execution_health();capabilities=list(health.get('tools',[]))
         schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities}
         minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
@@ -104,8 +166,10 @@ class PersonalAgent:
         last_error=None
         for attempt in range(self.planner_retries+1):
             try:
-                proposal,provenance=self.planner.propose(goal,minimal,capabilities);self.store.save_plan_proposal(proposal);self.store.save_provenance(goal.goal_id,provenance)
+                proposal,provenance=self.planner.propose(goal,minimal,capabilities)
                 validator=PlanValidator(set(capabilities),self.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
+                self._validate_plan_arguments(plan,schemas)
+                self.store.save_plan_proposal(proposal);self.store.save_provenance(goal.goal_id,provenance)
                 for permission,risk in decisions:self.store.save_permission(goal.goal_id,permission);self.store.save_risk(goal.goal_id,risk)
                 break
             except (PlannerError,PlanValidationError,RuntimeError,ValueError) as exc:
@@ -145,6 +209,7 @@ class PersonalAgent:
             except Exception as exc:self.store.event(goal.goal_id,'document_context_failed',{'error_type':type(exc).__name__},now())
         health=self._execution_health();capabilities=list(health.get('tools',[]));schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities};minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
         proposal,provenance=self.planner.propose(goal,minimal,capabilities);validator=PlanValidator(set(capabilities),self.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
+        self._validate_plan_arguments(plan,schemas)
         self.store.save_plan_proposal(proposal);self.store.save_provenance(goal_id,provenance)
         for permission,risk in decisions:self.store.save_permission(goal_id,permission);self.store.save_risk(goal_id,risk)
         old_run.status='SUPERSEDED';old_run.updated_at=now();self.store.save_task_run(old_run);self.store.clear_criteria(goal_id)
@@ -170,9 +235,40 @@ class PersonalAgent:
     def _approval_for(self,goal_id,step_id):
         items=[a for a in self.store.approvals_for_goal(goal_id) if a.step_id==step_id and a.status in {ApprovalStatus.PENDING,ApprovalStatus.APPROVED,ApprovalStatus.REJECTED}]
         return items[-1] if items else None
+    @staticmethod
+    def _contains_model_authority(value):
+        forbidden={'approved','approval_id','grant_id','authorization_override'}
+        if isinstance(value,dict):
+            return bool(forbidden.intersection(value)) or any(PersonalAgent._contains_model_authority(v) for v in value.values())
+        if isinstance(value,(list,tuple)):
+            return any(PersonalAgent._contains_model_authority(v) for v in value)
+        return False
+    @staticmethod
+    def _exact_approval_scope(goal,step):
+        return json.dumps({'user_id':goal.user_id,'goal_id':goal.goal_id,'tool':step.preferred_tool,'arguments':step.arguments},sort_keys=True,separators=(',',':'),ensure_ascii=False)
+    def _workspace_test_execution_grant(self,goal,run,step,approval,scope):
+        if approval is None or approval.status!=ApprovalStatus.APPROVED:raise PermissionError('workspace_test requires approved human authorization')
+        actor=str(approval.approved_by or '').strip()
+        if not actor or actor.lower() in {'model','assistant','nemotron','system','system_cancel'}:raise PermissionError('workspace_test requires trusted human approval')
+        center=PermissionCenter(self.store,goal.goal_id)
+        existing=[p for p in center.list(include_inactive=True) if p.capability=='workspace_test' and p.metadata.get('approval_id')==approval.approval_id]
+        if existing:
+            grant=existing[-1]
+            if grant.subject!=goal.user_id or grant.scope!=scope or grant.metadata.get('task_run_id')!=run.task_run_id or grant.metadata.get('step_id')!=step.step_id:raise PermissionError('workspace_test execution grant scope mismatch')
+            if grant.status!=PermissionStatus.ACTIVE:raise PermissionError('workspace_test execution grant is not active')
+            return center,grant
+        expires=(datetime.now(UTC)+timedelta(minutes=5)).isoformat()
+        if approval.expires_at:
+            try:
+                approved_expiry=datetime.fromisoformat(str(approval.expires_at).replace('Z','+00:00'));approved_expiry=approved_expiry if approved_expiry.tzinfo else approved_expiry.replace(tzinfo=UTC);expires=min(datetime.fromisoformat(expires),approved_expiry).isoformat()
+            except (TypeError,ValueError):raise PermissionError('workspace_test approval expiry invalid')
+        grant=center.grant(goal.user_id,'workspace_test',scope,PermissionEffect.ALLOW,granted_by=actor,expires_at=expires,metadata={'approval_id':approval.approval_id,'task_run_id':run.task_run_id,'step_id':step.step_id,'one_time':True})
+        self.store.event(goal.goal_id,'workspace_test_grant_issued',{'permission_id':grant.permission_id,'approval_id':approval.approval_id,'step_id':step.step_id,'expires_at':grant.expires_at},now());self.traces.record('authorization','workspace_test_grant','ISSUED',goal_id=goal.goal_id,task_run_id=run.task_run_id,trace_id=run.trace_id,correlation={'approval_id':approval.approval_id,'permission_id':grant.permission_id,'step_id':step.step_id},detail={'one_time':True})
+        return center,grant
     def decide_approval(self,approval_id:str,decision:str,*,actor:str='user'):
         approval=self.store.load_approval(approval_id)
         if approval.status!=ApprovalStatus.PENDING:raise ValueError('approval is not pending')
+        if approval.capability=='workspace_test' and decision=='approve' and str(actor).strip().lower() in {'model','assistant','nemotron','system','system_cancel'}:raise PermissionError('model_cannot_approve_workspace_test')
         if approval.expires_at and self._deadline_expired(approval.expires_at):
             approval.status=ApprovalStatus.EXPIRED;approval.decision_at=now();self.store.save_approval(approval);self.store.event(approval.goal_id,'approval_expired',{'approval_id':approval_id},now());raise ValueError('approval has expired')
         if decision not in {'approve','reject'}:raise ValueError('decision must be approve or reject')
@@ -200,9 +296,13 @@ class PersonalAgent:
         if goal.status==GoalStatus.CANCELLED:return self.report(goal,plan,run)
         if self._deadline_expired(goal.deadline):
             goal.status=GoalStatus.BLOCKED;run.status='DEADLINE_EXPIRED';self.store.event(goal_id,'deadline_expired',{'deadline':goal.deadline},now());self._persist(goal,plan,run);return self.report(goal,plan,run)
+        health=self._execution_health();schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name')}
         iterations=0
         for step in plan.steps:
             if step.status==StepStatus.VERIFIED:continue
+            argument_error=self._schema_argument_error(step,schemas)
+            if argument_error:
+                return self._block_invalid_arguments(goal,plan,run,step,argument_error)
             if step.status==StepStatus.WAITING and run.status=='WAITING_FOR_DELEGATION_APPROVAL':
                 output=(step.result or {}).get('output',{});request_id=output.get('request_id') if isinstance(output,dict) else None
                 if not request_id:
@@ -234,16 +334,18 @@ class PersonalAgent:
             if any(next(x for x in plan.steps if x.step_id==d).status!=StepStatus.VERIFIED for d in step.dependencies):continue
             if iterations>=self.max_iterations:goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';break
             iterations+=1
-            if (step.preferred_tool.startswith('automation_') or step.preferred_tool in {'connector_invoke','image_generate','document_ingest','daily_brief_update','daily_brief_close'}) and any(k in step.arguments for k in {'approved','approval_id','grant_id'}):
+            if (step.preferred_tool.startswith('automation_') or step.preferred_tool in {'connector_invoke','image_generate','document_ingest','daily_brief_update','daily_brief_close','learning_plan_create','learning_assess','workspace_test'}) and any(k in step.arguments for k in {'approved','approval_id','grant_id','authorization_override'}):
                 step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';self.store.event(goal_id,'model_authority_rejected',{'step_id':step.step_id},now());self._persist(goal,plan,run);return self.report(goal,plan,run)
+            if step.preferred_tool=='workspace_test' and (set(step.arguments)!={'project_name'} or not isinstance(step.arguments.get('project_name'),str) or not step.arguments['project_name'].strip()):
+                step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';self.store.event(goal_id,'workspace_test_scope_rejected',{'step_id':step.step_id},now());self._persist(goal,plan,run);return self.report(goal,plan,run)
             permission,risk=self.policy.evaluate(step.preferred_tool,'user',step.description,now())
             if permission.effect==PermissionEffect.DENY:
                 step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';break
             if permission.effect==PermissionEffect.REQUIRE_APPROVAL:
+                if self._contains_model_authority(step.arguments):
+                    step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';self.store.event(goal_id,'model_authority_rejected',{'step_id':step.step_id},now());self._persist(goal,plan,run);return self.report(goal,plan,run)
                 approval=self._approval_for(goal_id,step.step_id)
-                exact_scope=step.description
-                if step.preferred_tool.startswith('automation_') or step.preferred_tool in {'connector_invoke','image_generate','document_ingest','daily_brief_update','daily_brief_close'}:
-                    exact_scope=json.dumps({'user_id':goal.user_id,'goal_id':goal_id,'tool':step.preferred_tool,'arguments':step.arguments},sort_keys=True,separators=(',',':'),ensure_ascii=False)
+                exact_scope=self._exact_approval_scope(goal,step)
                 if approval is None:
                     approval=Approval(uuid.uuid4().hex,goal_id,run.task_run_id,step.step_id,step.description,step.preferred_tool,risk.level,now(),None,ApprovalStatus.PENDING,exact_scope)
                     self.store.save_approval(approval);run.approvals.append(approval.approval_id);self.store.event(goal_id,'approval_required',{'approval_id':approval.approval_id,'step_id':step.step_id},now())
@@ -255,8 +357,10 @@ class PersonalAgent:
                     step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='APPROVAL_EXPIRED';self._persist(goal,plan,run);return self.report(goal,plan,run)
                 if approval.status==ApprovalStatus.REJECTED:
                     step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';self._persist(goal,plan,run);return self.report(goal,plan,run)
-                if (step.preferred_tool.startswith('automation_') or step.preferred_tool in {'connector_invoke','image_generate','document_ingest','daily_brief_update','daily_brief_close'}) and approval.status==ApprovalStatus.APPROVED and approval.requested_scope!=exact_scope:
-                    step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';self.store.event(goal_id,'automation_approval_scope_mismatch',{'approval_id':approval.approval_id},now());self._persist(goal,plan,run);return self.report(goal,plan,run)
+                if approval.status==ApprovalStatus.APPROVED and approval.requested_scope!=exact_scope:
+                    step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED'
+                    event_type='automation_approval_scope_mismatch' if step.preferred_tool.startswith('automation_') else 'approval_scope_mismatch'
+                    self.store.event(goal_id,event_type,{'approval_id':approval.approval_id,'step_id':step.step_id,'tool':step.preferred_tool},now());self._persist(goal,plan,run);return self.report(goal,plan,run)
             delegation_request=None;request_id=None;specialists=[]
             if step.preferred_tool=='specialist_delegate':
                 args=dict(step.arguments);specialists=list(args.get('specialists',[]));objective=str(args.get('objective') or step.description);authorized_action=args.get('authorized_action');request_id=self.delegation.deterministic_id(goal_id,run.task_run_id,step.step_id,specialists,objective,authorized_action);inputs=dict(args.get('inputs',{}))
@@ -310,25 +414,45 @@ class PersonalAgent:
                         aid=pending_item.get('approval_id')
                         if isinstance(aid,str) and aid not in run.approvals:run.approvals.append(aid)
                     self.store.event(goal_id,'delegated_gen1_approval_required',{'request_id':request_id,'approvals':result.provenance.get('pending_approvals',[])},now());self._persist(goal,plan,run);return self.report(goal,plan,run)
+            elif step.preferred_tool in {'learning_plan_create','learning_plan_inspect','learning_assess'} and self.learning is not None:
+                value=self.learning.invoke(step.preferred_tool,step.arguments,owner_user_id=goal.user_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
+                self.store.event(goal_id,'learning_state_updated' if step.preferred_tool!='learning_plan_inspect' else 'learning_state_inspected',{'tool':step.preferred_tool,'plan_id':value['verification'].get('plan_id'),'assessment_id':value['verification'].get('assessment_id')},now())
             elif step.preferred_tool.startswith('automation_') and self.automation is not None and step.preferred_tool!='automation_inspect':
                 value=self.automation.invoke(step.preferred_tool,step.arguments,owner_user_id=goal.user_id,source_goal_id=goal.goal_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
             elif step.preferred_tool=='connector_list' and self.connectors is not None:
                 value={'connectors':self.connectors.discover(owner_user_id=goal.user_id)};obs=ToolObservation(True,step.preferred_tool,value,{'verified':all(x.get('connector_id') for x in value['connectors']),'method':'owner-scoped persisted connector registry projection'})
             elif step.preferred_tool=='connector_inspect' and self.connectors is not None:
-                cid=str(step.arguments.get('connector_id',''));value=self.connectors.inspect(cid,owner_user_id=goal.user_id);obs=ToolObservation(value.get('connector_id')==cid,step.preferred_tool,value,{'verified':value.get('connector_id')==cid and value.get('owner_user_id',goal.user_id)==goal.user_id,'method':'owner-scoped connector state reread','connector_id':cid})
+                cid=str(step.arguments.get('connector_id',''))
+                if not cid:
+                    return self._block_invalid_arguments(goal,plan,run,step,{'error':'missing_required_argument','argument':'connector_id'})
+                else:
+                    value=self.connectors.inspect(cid,owner_user_id=goal.user_id);obs=ToolObservation(value.get('connector_id')==cid,step.preferred_tool,value,{'verified':value.get('connector_id')==cid and value.get('owner_user_id',goal.user_id)==goal.user_id,'method':'owner-scoped connector state reread','connector_id':cid})
             elif step.preferred_tool=='connector_capabilities' and self.connectors is not None:
-                cid=str(step.arguments.get('connector_id',''));value={'connector_id':cid,'capabilities':self.connectors.capabilities(cid)};obs=ToolObservation(True,step.preferred_tool,value,{'verified':bool(value['capabilities']),'method':'typed connector descriptor reread','connector_id':cid})
+                cid=str(step.arguments.get('connector_id',''))
+                if not cid:
+                    return self._block_invalid_arguments(goal,plan,run,step,{'error':'missing_required_argument','argument':'connector_id'})
+                else:
+                    value={'connector_id':cid,'capabilities':self.connectors.capabilities(cid)};obs=ToolObservation(True,step.preferred_tool,value,{'verified':bool(value['capabilities']),'method':'typed connector descriptor reread','connector_id':cid})
             elif step.preferred_tool=='connector_health' and self.connectors is not None:
-                cid=str(step.arguments.get('connector_id',''));value=self.connectors.health(cid,owner_user_id=goal.user_id);obs=ToolObservation(True,step.preferred_tool,value,{'verified':value.get('connector_id')==cid and value.get('owner_user_id')==goal.user_id,'method':'connector adapter health recheck or explicit unavailable state','connector_id':cid})
-            elif step.preferred_tool=='connector_invoke' and self.connectors is not None:
-                cid=str(step.arguments.get('connector_id',''));op=str(step.arguments.get('operation',''));args=dict(step.arguments.get('arguments') or {});classification=str(step.arguments.get('classification','PRIVATE'));device_id=step.arguments.get('device_id');approval=self._approval_for(goal_id,step.step_id)
+                cid=str(step.arguments.get('connector_id',''))
+                if not cid:
+                    return self._block_invalid_arguments(goal,plan,run,step,{'error':'missing_required_argument','argument':'connector_id'})
+                else:
+                    value=self.connectors.health(cid,owner_user_id=goal.user_id);obs=ToolObservation(True,step.preferred_tool,value,{'verified':value.get('connector_id')==cid and value.get('owner_user_id')==goal.user_id,'method':'connector adapter health recheck or explicit unavailable state','connector_id':cid})
+            elif step.preferred_tool in {'connector_read','connector_invoke'} and self.connectors is not None:
+                cid=str(step.arguments.get('connector_id',''));op=str(step.arguments.get('operation',''));args=dict(step.arguments.get('arguments') or {});classification=str(step.arguments.get('classification','PRIVATE'));device_id=step.arguments.get('device_id');approval=self._approval_for(goal_id,step.step_id) if step.preferred_tool=='connector_invoke' else None
                 try:
-                    value=self.connectors.invoke(cid,op,args,owner_user_id=goal.user_id,goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,classification=classification,approval=approval,device_id=device_id);verified=bool((value.get('verification') or {}).get('verified'));obs=ToolObservation(verified,step.preferred_tool,value,value.get('verification') or {'verified':False,'reason':'connector_verification_missing'})
-                    self.store.event(goal_id,'connector_invoked',{'connector_id':cid,'operation':op,'request_id':value.get('request_id'),'status':value.get('status'),'verified':verified},now());self.traces.record('connector',cid,str(value.get('status','FAILED')),goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id,'request_id':value.get('request_id')},detail={'operation':op,'verified':verified})
+                    fn=self.connectors.invoke_read if step.preferred_tool=='connector_read' else self.connectors.invoke
+                    value=fn(cid,op,args,owner_user_id=goal.user_id,goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,classification=classification,approval=approval,device_id=device_id);verified=bool((value.get('verification') or {}).get('verified'));obs=ToolObservation(verified,step.preferred_tool,value,value.get('verification') or {'verified':False,'reason':'connector_verification_missing'})
+                    self.store.event(goal_id,'connector_invoked',{'connector_id':cid,'operation':op,'request_id':value.get('request_id'),'status':value.get('status'),'verified':verified},now());self.traces.record('connector',cid,str(value.get('status','FAILED')),goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id,'request_id':value.get('request_id')},detail={'operation':op,'verified':verified,'read_only':step.preferred_tool=='connector_read'})
                 except Exception as exc:
-                    obs=ToolObservation(False,step.preferred_tool,{'error':'connector_invocation_failed','error_type':type(exc).__name__},{'verified':False,'method':'connector manager policy/authorization/invocation/verification boundary','reason':type(exc).__name__})
+                    obs=ToolObservation(False,step.preferred_tool,{'error':'connector_invocation_failed','error_type':type(exc).__name__},{'verified':False,'method':'connector manager policy/authorization/invocation/verification boundary','reason':str(getattr(exc,'category',type(exc).__name__))})
             elif step.preferred_tool in {'notification_inspect','notification_explain'} and self.notifications is not None:
-                nid=str(step.arguments.get('notification_id',''));value=self.notifications.inspect(nid,owner_user_id=goal.user_id) if step.preferred_tool=='notification_inspect' else self.notifications.explain(nid,owner_user_id=goal.user_id);obs=ToolObservation(True,step.preferred_tool,value,{'verified':True,'method':'persisted owner-scoped notification intelligence reread','notification_id':nid})
+                nid=str(step.arguments.get('notification_id',''))
+                if not nid:
+                    return self._block_invalid_arguments(goal,plan,run,step,{'error':'missing_required_argument','argument':'notification_id'})
+                else:
+                    value=self.notifications.inspect(nid,owner_user_id=goal.user_id) if step.preferred_tool=='notification_inspect' else self.notifications.explain(nid,owner_user_id=goal.user_id);obs=ToolObservation(True,step.preferred_tool,value,{'verified':True,'method':'persisted owner-scoped notification intelligence reread','notification_id':nid})
             elif step.preferred_tool=='notification_delivery_inspect' and self.notification_delivery is not None:
                 value=self.notification_delivery.inspect(owner_user_id=goal.user_id,notification_id=step.arguments.get('notification_id'),attempt_id=step.arguments.get('attempt_id'));obs=ToolObservation(True,step.preferred_tool,value,{'verified':True,'method':'persisted owner-scoped delivery state reread'})
             elif step.preferred_tool=='notification_channels_inspect' and self.notification_delivery is not None:
@@ -361,10 +485,21 @@ class PersonalAgent:
                 value=self.documents.invoke_ingest(step.arguments,user_id=goal.user_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
             elif step.preferred_tool=='document_search' and self.documents is not None:
                 value=self.documents.invoke_search(step.arguments,user_id=goal.user_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
+            elif step.preferred_tool=='workspace_test':
+                try:
+                    approval=self._approval_for(goal_id,step.step_id);scope=json.dumps({'user_id':goal.user_id,'goal_id':goal_id,'tool':'workspace_test','arguments':step.arguments},sort_keys=True,separators=(',',':'),ensure_ascii=False)
+                    center,grant=self._workspace_test_execution_grant(goal,run,step,approval,scope)
+                    if center.authorize(goal.user_id,'workspace_test',scope)!=PermissionEffect.ALLOW:raise PermissionError('workspace_test execution grant authorization failed')
+                    center.revoke(grant.permission_id,actor='workspace_test_consumer');self.store.event(goal_id,'workspace_test_grant_consumed',{'permission_id':grant.permission_id,'approval_id':approval.approval_id,'step_id':step.step_id},now());self.traces.record('authorization','workspace_test_grant','CONSUMED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'approval_id':approval.approval_id,'permission_id':grant.permission_id,'step_id':step.step_id},detail={'one_time':True})
+                    trusted_arguments={'project_name':str(step.arguments['project_name']),'approved':True};obs=self.gen1.invoke(step.preferred_tool,trusted_arguments)
+                except Exception as exc:
+                    obs=ToolObservation(False,step.preferred_tool,{'error':'workspace_test_authorization_failed','error_type':type(exc).__name__},{'verified':False,'reason':'workspace_test_execution_grant_failed'})
             else:
                 obs=self.gen1.invoke(step.preferred_tool,step.arguments)
             step.result={'output':obs.output,'verification':obs.verification};self.store.event(goal_id,'tool_observed',{'tool':step.preferred_tool,'ok':obs.ok},now());self.traces.record('observation',step.preferred_tool,'OK' if obs.ok else 'FAILED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id})
             if not obs.ok:
+                if isinstance(obs.output,dict) and obs.output.get('error') in {'missing_required_argument','invalid_arguments','unexpected_arguments'}:
+                    return self._block_invalid_arguments(goal,plan,run,step,dict(obs.output))
                 step.status=StepStatus.FAILED
                 if step.step_id not in run.failed_steps:run.failed_steps.append(step.step_id)
                 decision=self.failures.classify(obs.output,attempts=step.attempts,retry_limit=step.retry_limit);self.store.event(goal_id,'failure_classified',decision.to_dict()|{'step_id':step.step_id},now());self.traces.record('recovery','failure_classifier',decision.action,goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id},detail={'category':decision.category,'retryable':decision.retryable})
@@ -435,8 +570,12 @@ class PersonalAgent:
                 summaries.append(f"Connector {output.get('connector_id')} is {output.get('status',output.get('state','UNKNOWN'))}; authorization {output.get('authorization_state','unknown')}.")
             elif step.preferred_tool=='connector_capabilities' and isinstance(output,dict):
                 summaries.append(f"Connector {output.get('connector_id')} exposes "+', '.join(x.get('operation','') for x in output.get('capabilities',[])[:10])+'.')
-            elif step.preferred_tool=='connector_invoke' and isinstance(output,dict):
+            elif step.preferred_tool in {'connector_read','connector_invoke'} and isinstance(output,dict):
                 summaries.append(f"Connector {output.get('connector')} operation {output.get('operation')} is {output.get('status')} and its effect/response was independently verified.")
+            elif step.preferred_tool in {'learning_plan_create','learning_plan_inspect'} and isinstance(output,dict):
+                summaries.append(f"Learning plan for {output.get('subject','the requested subject')} is {output.get('status','UNKNOWN')} with {len(output.get('units',[]))} bounded units and {len(output.get('weaknesses',[]))} identified weak areas.")
+            elif step.preferred_tool=='learning_assess' and isinstance(output,dict):
+                plan=output.get('plan',{});summaries.append(f"Assessment recorded and independently reread; learning plan is {plan.get('status','UNKNOWN')} with {len(plan.get('weaknesses',[]))} weak areas requiring attention.")
             elif step.preferred_tool=='notification_explain' and isinstance(output,dict):
                 summaries.append(f"Notification {output.get('notification_id')} surfaced because: {output.get('why','No explanation available')} Status: {output.get('status','unknown')}.")
             elif step.preferred_tool=='notification_inspect' and isinstance(output,dict):

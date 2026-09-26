@@ -1,5 +1,6 @@
 from __future__ import annotations
 import hashlib,html,json,re
+from time import monotonic
 from dataclasses import asdict,dataclass,field
 from datetime import UTC,date,datetime,timedelta
 from typing import Any
@@ -25,7 +26,20 @@ class PersonalOperationsSnapshot:
 class PersonalOperationsService:
     """Read-only bounded projection over authoritative Gen-2 state."""
     def __init__(self,store,*,daily_os=None,diagnostics=None,model_manager=None,connectors=None,devices=None,world=None,notification_service=None,max_items=20):
-        self.store=store;self.daily_os=daily_os;self.diagnostics=diagnostics;self.model_manager=model_manager;self.connectors=connectors;self.devices=devices;self.world=world;self.notifications=notification_service;self.max_items=max(5,min(int(max_items),50))
+        self.store=store
+        self.daily_os=daily_os
+        self.diagnostics=diagnostics
+        self.model_manager=model_manager
+        self.connectors=connectors
+        self.devices=devices
+        self.world=world
+        self.notifications=notification_service
+        self.max_items=max(5,min(int(max_items),50))
+        self._connector_cache={}
+        self._connector_cache_at={}
+        self._diagnostics_cache=None
+        self._diagnostics_cache_at=0.0
+        self._health_ttl_seconds=5.0
     @staticmethod
     def _clean_text(value):
         text=str(value)[:1000]
@@ -75,6 +89,10 @@ class PersonalOperationsService:
         return {'registry':core,'models':models}
     def _connectors(self,owner):
         if self.connectors is None:return {'status':'UNAVAILABLE','items':[],'counts':{}}
+        now_mono=monotonic()
+        cached_at=self._connector_cache_at.get(owner,0.0)
+        if owner in self._connector_cache and now_mono-cached_at < self._health_ttl_seconds:
+            return self._connector_cache[owner]
         items=[];raw_items=[]
         try:discovered=self.connectors.discover(owner_user_id=owner)
         except TypeError:discovered=self.connectors.discover()
@@ -88,7 +106,10 @@ class PersonalOperationsService:
             raw_items.append(item);items.append(self._safe(item))
         counts={'total':len(raw_items),'configured':sum(bool(x.get('configured')) for x in raw_items),'authorized':sum(bool(x.get('authorized')) for x in raw_items),'healthy':sum(x.get('status')=='HEALTHY' for x in raw_items),'blocked':sum(x.get('status') in {'EXTERNALLY_BLOCKED','BLOCKED','UNAVAILABLE'} for x in raw_items),'authorization_required':sum(x.get('authorization_state') in {'REQUIRED','NOT_CONFIGURED','PENDING','EXPIRED'} for x in raw_items)}
         failures=[{'connector_id':x.get('connector_id'),'status':x.get('status'),'reason':x.get('reason')} for x in items if x.get('status') in {'FAILED','DEGRADED','EXTERNALLY_BLOCKED','UNAVAILABLE'}][:self.max_items]
-        return {'status':'AVAILABLE','items':items,'counts':counts,'recent_failures':failures}
+        result={'status':'AVAILABLE','items':items,'counts':counts,'recent_failures':failures}
+        self._connector_cache[owner]=result
+        self._connector_cache_at[owner]=monotonic()
+        return result
     def _devices(self):
         if self.devices is None:return {'status':'UNAVAILABLE','items':[]}
         items=[]
@@ -112,8 +133,27 @@ class PersonalOperationsService:
 
     def _diagnostics(self):
         if self.diagnostics is None:return {'status':'UNAVAILABLE','healthy':None,'issues':[]}
-        try:r=self.diagnostics.inspect();return {'status':'AVAILABLE','healthy':bool(r.get('healthy')),'issues':self._safe(r.get('issues',[]))[:self.max_items],'storage':{'available':bool((r.get('storage') or {}).get('available'))}}
-        except Exception as exc:return {'status':'UNAVAILABLE','healthy':False,'issues':[{'component':'diagnostics','cause':type(exc).__name__}]}
+        now_mono=monotonic()
+        if self._diagnostics_cache is not None and now_mono-self._diagnostics_cache_at < self._health_ttl_seconds:
+            return self._diagnostics_cache
+        try:
+            r=self.diagnostics.inspect()
+            result={'status':'AVAILABLE','healthy':bool(r.get('healthy')),'issues':self._safe(r.get('issues',[]))[:self.max_items],'storage':{'available':bool((r.get('storage') or {}).get('available'))}}
+            self._diagnostics_cache=result
+            self._diagnostics_cache_at=monotonic()
+            return result
+        except Exception as exc:
+            return {'status':'UNAVAILABLE','healthy':False,'issues':[{'component':'diagnostics','cause':type(exc).__name__}]}
+    def invalidate_health_cache(self,owner_user_id=None):
+        if owner_user_id is None:
+            self._connector_cache.clear()
+            self._connector_cache_at.clear()
+        else:
+            self._connector_cache.pop(owner_user_id,None)
+            self._connector_cache_at.pop(owner_user_id,None)
+        self._diagnostics_cache=None
+        self._diagnostics_cache_at=0.0
+
     def snapshot(self,*,owner_user_id='user',day=None):
         if not isinstance(owner_user_id,str) or not owner_user_id.strip():raise ValueError('operations owner required')
         day=str(day or datetime.now(UTC).date().isoformat());date.fromisoformat(day);goals=self._goals(owner_user_id);gmap={g['goal_id']:g for g in goals};runs=[r for r in self.store.all_task_runs(200) if r.get('goal_id') in gmap];tasks=[self._task_projection(r,gmap[r['goal_id']]) for r in runs];active=[x for x in tasks if x['status'] in ACTIVE_GOALS][:self.max_items];completed=[x for x in tasks if x['status']=='COMPLETED'][:10]

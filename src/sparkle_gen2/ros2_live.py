@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os,re,subprocess
+import os,re,subprocess,sys
 from pathlib import Path
 
 class ROS2CommandError(RuntimeError):pass
@@ -7,16 +7,33 @@ class ROS2CommandError(RuntimeError):pass
 def ros_environment(setup='/opt/ros/lyrical/setup.bash'):
     p=Path(setup).resolve()
     if not p.is_file() or '/opt/ros/' not in str(p):raise ValueError('invalid_ros_setup')
-    c=subprocess.run(['/bin/bash','-c','source "$1" >/dev/null 2>&1; env -0','bash',str(p)],capture_output=True,timeout=8,check=False)
-    if c.returncode!=0:raise ROS2CommandError('ros_setup_failed')
-    env={}
-    for item in c.stdout.split(b'\0'):
-        if b'=' in item:
-            k,v=item.split(b'=',1);env[k.decode(errors='ignore')]=v.decode(errors='ignore')
+    prefix=p.parent.resolve()
+    if prefix.parent.name!='ros' or not str(prefix).startswith('/opt/ros/'):raise ValueError('invalid_ros_setup')
+    py=prefix/'lib'/f'python{sys.version_info.major}.{sys.version_info.minor}'/'site-packages';lib=prefix/'lib';arch=lib/'x86_64-linux-gnu'
+    runtime=Path('/tmp')/f'sparkle-gen2-ros2-{os.getuid()}'
+    if runtime.exists():
+        st=runtime.lstat()
+        if runtime.is_symlink() or not runtime.is_dir() or st.st_uid!=os.getuid():raise ValueError('unsafe_ros_runtime_dir')
+    else:runtime.mkdir(mode=0o700)
+    runtime.chmod(0o700);logdir=runtime/'log';logdir.mkdir(mode=0o700,exist_ok=True);logdir.chmod(0o700)
+    env={'PATH':str(prefix/'bin')+':/usr/bin:/bin','LANG':'C.UTF-8','LC_ALL':'C.UTF-8','AMENT_PREFIX_PATH':str(prefix),'CMAKE_PREFIX_PATH':str(prefix),'ROS_VERSION':'2','ROS_PYTHON_VERSION':'3','ROS_DISTRO':prefix.name,'HOME':str(runtime),'ROS_HOME':str(runtime),'ROS_LOG_DIR':str(logdir)}
+    python_paths=[]
+    if py.is_dir():python_paths.append(str(py))
+    system_dist=Path('/usr/lib/python3/dist-packages')
+    if system_dist.is_dir():python_paths.append(str(system_dist))
+    env['PYTHONPATH']=':'.join(python_paths)
+    libs=[str(x) for x in (lib,arch) if x.is_dir()];env['LD_LIBRARY_PATH']=':'.join(libs)
+    domain=os.environ.get('ROS_DOMAIN_ID')
+    if domain is not None and domain.isdigit() and 0<=int(domain)<=232:env['ROS_DOMAIN_ID']=domain
+    rmw=os.environ.get('RMW_IMPLEMENTATION')
+    if rmw is not None and re.fullmatch(r'rmw_[A-Za-z0-9_]{1,80}',rmw):env['RMW_IMPLEMENTATION']=rmw
     return env
 
 class ROS2CLI:
-    def __init__(self,env=None,binary='/opt/ros/lyrical/bin/ros2'):self.env=dict(env or ros_environment());self.binary=str(Path(binary).resolve())
+    def __init__(self,env=None,binary='/opt/ros/lyrical/bin/ros2'):
+        self.env=dict(env or ros_environment());resolved=Path(binary).resolve();expected=Path('/opt/ros/lyrical/bin/ros2').resolve()
+        if resolved!=expected or not resolved.is_file():raise ValueError('invalid_ros2_binary')
+        self.binary=str(resolved)
     def run(self,args,timeout=10):
         if not isinstance(args,(list,tuple)) or not args or any(not isinstance(x,str) or len(x)>1000 for x in args):raise ValueError('invalid_ros2_command')
         c=subprocess.run([self.binary,*args],env=self.env,capture_output=True,text=True,timeout=timeout,check=False)

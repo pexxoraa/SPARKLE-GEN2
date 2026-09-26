@@ -7,7 +7,16 @@ from typing import Any
 def build_gen2_model_registry(*,path:Path|None=None,secrets=None):
     from sparkle.registry import ModelRegistry
     from .nvidia_models import NVIDIAEmbeddingAdapter,NVIDIARerankingAdapter,NVIDIAContentSafetyAdapter,NVIDIAVoiceChatAdapter,NVIDIAImageGenerationAdapter
-    return ModelRegistry(path=path or Path(__file__).with_name('nemotron_models.json'),secrets=secrets,adapter_factories={'nvidia_embeddings':NVIDIAEmbeddingAdapter,'nvidia_reranking':NVIDIARerankingAdapter,'nvidia_content_safety':NVIDIAContentSafetyAdapter,'nvidia_voicechat':NVIDIAVoiceChatAdapter,'nvidia_image_generation':NVIDIAImageGenerationAdapter})
+    from .gemini_voicechat_transport import GeminiLiveVoiceAdapter
+    if secrets is None:
+        from .protected_secrets import build_gen2_secret_resolver
+        secrets=build_gen2_secret_resolver()
+    registry=ModelRegistry(path=path or Path(__file__).with_name('nemotron_models.json'),secrets=secrets,adapter_factories={'nvidia_embeddings':NVIDIAEmbeddingAdapter,'nvidia_reranking':NVIDIARerankingAdapter,'nvidia_content_safety':NVIDIAContentSafetyAdapter,'nvidia_voicechat':NVIDIAVoiceChatAdapter,'gemini_voicechat':GeminiLiveVoiceAdapter,'nvidia_image_generation':NVIDIAImageGenerationAdapter})
+    from .protected_secrets import protected_voice_provider
+    from .voice_providers import VOICE_PROVIDER_ALIASES
+    selected=protected_voice_provider()
+    if selected is not None:registry.routing['voice']=VOICE_PROVIDER_ALIASES[selected]
+    return registry
 
 KNOWN_CAPABILITIES=frozenset({'general','reasoning','planning','coding','tool_use','multimodal','perception','voice','embedding','reranking','image_generation','safety'})
 KNOWN_INPUT_MODALITIES=frozenset({'text','image','audio','document'})
@@ -166,12 +175,23 @@ class ModelCapabilityManager:
         except Exception:pass
         return {'result':result,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'image_generation','selection_reason':route.selection_reason,'fallback':route.fallback,'provider_request_id':result.get('provider_request_id'),'provider_status':result.get('provider_status')}}
 
-    def voice_provider(self):
-        route=self.route(['voice'],input_modalities=['audio'],output_modalities=['audio','text'])
+    def voice_provider(self,provider=None):
+        preferred_id=None
+        if self.registry is not None:
+            from .voice_providers import VOICE_PROVIDER_ALIASES,normalize_voice_provider
+            if provider is None:
+                try:
+                    from .protected_secrets import protected_voice_provider
+                    provider=protected_voice_provider()
+                except Exception:
+                    provider=None
+            alias=normalize_voice_provider(provider)
+            preferred_id=VOICE_PROVIDER_ALIASES.get(alias) if alias else self.registry.routing.get('voice')
+        route=self.route(['voice'],input_modalities=['audio'],output_modalities=['audio','text'],tools_required=True,preferred_id=preferred_id)
         if route.selected is None:raise RuntimeError('model_capability_unavailable:voice')
         if self.registry is None:raise RuntimeError('model_registry_execution_unavailable')
         adapter=self.registry.adapter(route.selected.record_id)
-        return {'adapter':adapter,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'voice','selection_reason':route.selection_reason,'fallback':route.fallback}}
+        return {'adapter':adapter,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'voice','selection_reason':route.selection_reason,'fallback':route.fallback,'voice_provider':provider or route.selected.provider}}
 
     def assess_safety(self,text):
         route=self.route(['safety'],input_modalities=['text'],output_modalities=['safety'])
@@ -189,7 +209,11 @@ class ModelCapabilityManager:
         return {'assessment':assessment,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'safety','selection_reason':route.selection_reason,'fallback':route.fallback,'provider_request_id':assessment.get('provider_request_id')}}
     def status(self,capability):
         outputs={'embedding':['embedding'],'reranking':['ranking'],'image_generation':['image'],'safety':['safety'],'voice':['audio','text']}.get(capability,['text']);inputs={'voice':['audio']}.get(capability,['text'])
-        route=self.route([capability],input_modalities=inputs,output_modalities=outputs);return {'capability':capability,'status':'CONNECTED' if route.selected is not None else 'EXTERNALLY_BLOCKED','route':route.to_dict(),'candidates':self.eligible(capability,output_modalities=outputs) if capability in KNOWN_CAPABILITIES else []}
+        if capability=='voice':
+            try:routed=self.voice_provider();route=CapabilityRoute(**{k:v for k,v in routed['route'].items() if k!='selected'},selected=ModelRecord(**routed['route']['selected']))
+            except Exception:route=self.route([capability],input_modalities=inputs,output_modalities=outputs,tools_required=True,preferred_id='__configured_voice_provider_unavailable__')
+        else:route=self.route([capability],input_modalities=inputs,output_modalities=outputs)
+        health_state=(route.selected.health if route.selected is not None else ('BLOCKED' if route.status=='BLOCKED' else 'UNAVAILABLE'));return {'capability':capability,'status':'CONNECTED' if route.selected is not None else 'EXTERNALLY_BLOCKED','health_state':health_state,'route':route.to_dict(),'candidates':self.eligible(capability,output_modalities=outputs,tools_required=(capability=='voice')) if capability in KNOWN_CAPABILITIES else []}
 
 class CapabilityRouter:
     """Capability-first facade; callers request semantics, never concrete model identities."""

@@ -18,7 +18,7 @@ class Cycle6EngineeringTests(unittest.TestCase):
         with self.assertRaises(PermissionError):p.approve(c.candidate_id,'model')
         with self.assertRaises(ValueError):p.approve(c.candidate_id,'human')
         with self.assertRaises(ValueError):p.record_tests(c.candidate_id,True)
-        p.implement(c.candidate_id,{'implementation':'bounded candidate'});p.record_tests(c.candidate_id,True);p.review(c.candidate_id,True);p.approve(c.candidate_id,'human')
+        p.implement(c.candidate_id,{'implementation':'bounded candidate'});p.record_tests(c.candidate_id,True);p.record_security(c.candidate_id,True,{'verified':True,'method':'bounded security review'});p.review(c.candidate_id,True);p.approve(c.candidate_id,'human')
         installed=p.install(c.candidate_id);self.assertEqual(installed['candidate'].status,'INSTALLED');self.assertTrue(installed['verification']['registered'])
 
 if __name__=='__main__':unittest.main()

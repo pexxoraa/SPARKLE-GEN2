@@ -37,6 +37,18 @@ class LocalGen1Gateway:
                 raise RuntimeError('nemotron_only_registry_violation')
             system=SparkleSystem(model_registry=registry)
         self.system=system
+        self._external_workspace_worker=None
+        try:
+            from .protected_secrets import build_protected_external_worker
+            self._external_workspace_worker=build_protected_external_worker(self.system.workspaces.root)
+        except Exception:
+            self._external_workspace_worker=None
+        self._strict_workspace_worker=None
+        try:
+            from .workspace_isolation import build_strict_workspace_worker
+            self._strict_workspace_worker=build_strict_workspace_worker(self.system.workspaces.root)
+        except Exception:
+            self._strict_workspace_worker=None
         from .model_manager import CapabilityRouter,ModelCapabilityManager
         self.model_manager=ModelCapabilityManager(registry=self.system.models,fallback_allowed=False);self.capability_router=CapabilityRouter(self.model_manager)
     def health(self):
@@ -45,43 +57,247 @@ class LocalGen1Gateway:
             hs=self.system.models.health.status(rid);cfg=record.config;secret_refs=cfg.get('secret_refs',[]);configured=(rid in self.system.models._injected_ids or not secret_refs or any(self.system.models.secrets.status(secret_refs).values()))
             models.append({'record_id':rid,'provider':record.provider,'model':record.model_id,'roles':sorted(record.roles),'capabilities':sorted(cfg.get('capabilities',record.roles)),'modalities':list(record.modalities),'input_modalities':list(cfg.get('input_modalities',record.modalities)),'output_modalities':list(cfg.get('output_modalities',['text'])),'supports_tools':bool(cfg.get('supports_tools',False) or 'tool_use' in record.roles),'enabled':record.enabled,'active':rid==self.system.models.active_id,'configured':configured,'health':hs['state'],'health_reason':hs.get('reason'),'allow_fallback':bool(cfg.get('allow_fallback',False)),'context_window':cfg.get('context_window'),'max_output_tokens':cfg.get('max_output_tokens'),'latency_class':cfg.get('latency_class','balanced')})
         agents=self.system.agents.list() if hasattr(self.system,'agents') else []
-        definitions=[{'name':d.name,'description':d.description,'parameters':d.parameters} for d in self.system.tools.definitions()]
-        return {'available':True,'tools':sorted(self.system.tools.names),'tool_definitions':definitions,'models':models,'agents':agents,'boundary':'SparkleSystem/ToolRegistry'}
+        definitions=[]
+        for d in self.system.tools.definitions():
+            parameters=d.parameters
+            if d.name=='workspace_test':
+                # Gen-2 owns authorization. The model proposes only the workspace identity;
+                # the trusted wrapper injects Gen-1's transport-level approved flag after
+                # exact persisted human approval.
+                source=dict(d.parameters or {})
+                props=dict(source.get('properties') or {})
+                parameters={
+                    'type':'object',
+                    'properties':{'project_name':dict(props.get('project_name') or {'type':'string'})},
+                    'required':['project_name'],
+                    'additionalProperties':False,
+                }
+            definitions.append({'name':d.name,'description':d.description,'parameters':parameters})
+        worker_status={'configured':False};strict_status={'configured':False}
+        if self._external_workspace_worker is not None:
+            try:
+                raw=self._external_workspace_worker.status();worker_status={k:raw.get(k) for k in ('configured','enabled','endpoint_https_valid','worker_identity_configured','https_required','explicit_approval_required')}
+            except Exception:worker_status={'configured':False}
+        if self._strict_workspace_worker is not None:
+            try:
+                raw=self._strict_workspace_worker.status();executor=dict(raw.get('executor') or {});strict_status={'configured':bool(raw.get('configured')),'enabled':bool(raw.get('enabled')),'worker_identity_configured':bool(raw.get('worker_identity_configured')),'explicit_approval_required':bool(raw.get('explicit_approval_required')),'isolation_verified':bool(raw.get('isolation_verified')),'profile':executor.get('isolation_profile'),'filesystem_isolation':bool(executor.get('filesystem_isolation')),'network_isolation':bool(executor.get('network_isolation')),'resource_limits':bool(executor.get('resource_limits'))}
+            except Exception:strict_status={'configured':False}
+        return {'available':True,'tools':sorted(self.system.tools.names),'tool_definitions':definitions,'models':models,'agents':agents,'boundary':'SparkleSystem/ToolRegistry','external_workspace_worker':worker_status,'strict_workspace_worker':strict_status}
     def retrieve_context(self,request,requirements):
         bundle=self.system.context.build(request)
         return {'requirements':list(requirements),'rendered':bundle.render()[:6000],'source':'gen1-context'}
     def plan(self,goal,context,available_capabilities):
         from sparkle.contracts import Message,ModelRequest
+
+        available=set(available_capabilities)
+
+        # Gen-2 supplies the authoritative planner-visible tool schemas.
+        # This includes Gen-2-owned tools such as operations_snapshot.
+        supplied_definitions=context.get('tool_schemas')
+
+        if isinstance(supplied_definitions,dict):
+            tool_definitions=[]
+            for name,definition in supplied_definitions.items():
+                if name not in available or not isinstance(definition,dict):
+                    continue
+                tool_definitions.append({
+                    'name':name,
+                    'description':str(definition.get('description','')),
+                    'parameters':dict(definition.get('parameters') or {}),
+                })
+        else:
+            # Backward-compatible fallback for direct gateway callers/tests
+            # that do not provide Gen-2 planner schemas.
+            tool_definitions=[]
+            tool_registry=getattr(self.system,'tools',None)
+            if tool_registry is not None:
+                for d in tool_registry.definitions():
+                    if d.name not in available:
+                        continue
+
+                    parameters=d.parameters
+
+                    # Gen-2 owns authorization for workspace_test. The planner
+                    # proposes only the project identity; the trusted wrapper
+                    # supplies the transport-level approval flag after approval.
+                    if d.name=='workspace_test':
+                        source=dict(d.parameters or {})
+                        props=dict(source.get('properties') or {})
+                        parameters={
+                            'type':'object',
+                            'properties':{
+                                'project_name':dict(
+                                    props.get('project_name') or {'type':'string'}
+                                )
+                            },
+                            'required':['project_name'],
+                            'additionalProperties':False,
+                        }
+
+                    tool_definitions.append({
+                        'name':d.name,
+                        'description':d.description,
+                        'parameters':parameters,
+                    })
+
         schema={
-          'goal_id':goal['goal_id'],'steps':[{'step_id':'step-1','objective':'bounded action','required_capabilities':['one exact capability'],'depends_on':[],'success_criteria':['observable result'],'arguments':{},'timeout_seconds':30,'retry_limit':1}],
-          'success_criteria':[{'description':'goal result verified','verification_method':'all_steps_verified'}],
-          'risk':'LOW','confidence':0.0,'unresolved_questions':[]
+            'goal_id':goal['goal_id'],
+            'steps':[{
+                'step_id':'step-1',
+                'objective':'bounded action',
+                'required_capabilities':['one exact capability/tool name'],
+                'depends_on':[],
+                'success_criteria':['observable result'],
+                'arguments':{},
+                'timeout_seconds':30,
+                'retry_limit':1,
+            }],
+            'success_criteria':[{
+                'description':'goal result verified',
+                'verification_method':'all_steps_verified',
+            }],
+            'risk':'LOW',
+            'confidence':0.0,
+            'unresolved_questions':[],
         }
+
         prompt=(
-          'Create a minimal executable plan for this goal. Return ONLY one JSON object, no markdown. '
-          'Use only capabilities in AVAILABLE_CAPABILITIES. Never invent tools. Each step must request exactly one capability. '
-          'Dependencies must reference earlier or existing step IDs. Goal verification_method must be all_steps_verified or step_verified:<step_id>. '
-          'The model proposes actions only; it cannot grant permission, approve, execute, verify, or declare completion.\n'
-          f'GOAL={json.dumps({k:goal[k] for k in ("goal_id","user_request","constraints","deadline")},ensure_ascii=False)}\n'
-          f'AVAILABLE_CAPABILITIES={json.dumps(available_capabilities)}\n'
-          f'RELEVANT_CONTEXT={json.dumps(str(context.get("rendered",""))[:4000],ensure_ascii=False)}\n'
-          f'OUTPUT_SHAPE={json.dumps(schema)}'
+            'Create a minimal executable plan for this goal. '
+            'Return ONLY one JSON object, with no markdown and no commentary. '
+
+            'Use only tools present in AVAILABLE_TOOL_DEFINITIONS. '
+            'required_capabilities MUST contain exactly one allowed '
+            'capability/tool name for each step. '
+
+            'Do NOT emit any field named preferred_tool. '
+            'The executable tool selection is derived deterministically by '
+            'Gen-2 from required_capabilities after planning. '
+
+            'Every step.arguments MUST be a JSON object conforming to the '
+            'selected tool parameters schema. '
+            'Every schema-required argument MUST be present and non-empty. '
+            'When additionalProperties is false, do not add undeclared arguments. '
+
+            'NEVER invent connector IDs, notification IDs, device IDs, project '
+            'IDs, artifact IDs, or other opaque identifiers. '
+            'Only use identifiers explicitly present in GOAL or '
+            'RELEVANT_CONTEXT, or produced by an earlier verified step. '
+
+            'If a required identifier is not known yet, do not call that tool '
+            'with an empty or invented value. Prefer a suitable preceding '
+            'read-only list/discovery/inspection tool when one is available. '
+
+            'For operations_snapshot specifically: the optional day argument '
+            'is a calendar date in YYYY-MM-DD form. '
+            'When the request means current/today/now and no explicit calendar '
+            'date is supplied, OMIT day entirely. '
+            'NEVER use natural-language values such as today, tomorrow, '
+            'yesterday, current, or now for day. '
+
+            'For a goal asking for current system status, operational status, '
+            'or a concrete next action, prefer an available bounded aggregate '
+            'read-only status/snapshot tool when its description matches that '
+            'purpose. Use the resulting grounded next_action rather than '
+            'inventing a recommendation from raw subsystem state. '
+
+            'For example, if operations_snapshot is available and the goal '
+            'asks for current system status plus one concrete next action, '
+            'use operations_snapshot with arguments {} unless the goal '
+            'explicitly supplies an ISO calendar date. '
+
+            'Dependencies must reference earlier or existing step IDs. '
+            'Each step must request exactly one capability/tool. '
+
+            'The model proposes actions only; it cannot grant permission, '
+            'approve, execute, verify, or declare completion. '
+
+            f'GOAL={json.dumps({k:goal[k] for k in ("goal_id","user_request","constraints","deadline")},ensure_ascii=False)}\\n'
+            f'AVAILABLE_CAPABILITIES={json.dumps(sorted(available),ensure_ascii=False)}\\n'
+            f'AVAILABLE_TOOL_DEFINITIONS={json.dumps(tool_definitions,ensure_ascii=False,separators=(",",":"))}\\n'
+            f'RELEVANT_CONTEXT={json.dumps(str(context.get("rendered",""))[:6000],ensure_ascii=False)}\\n'
+            f'OUTPUT_SHAPE={json.dumps(schema,ensure_ascii=False,separators=(",",":"))}'
         )
-        request=ModelRequest(messages=[Message(role='user',content=prompt)],system='You are SPARKLE Gen-2 planner. Produce strict JSON only.',max_output_tokens=1024,temperature=0.0,thinking=False,metadata={'operation':'gen2_plan','required_capabilities':['planning','reasoning']})
+
+        request=ModelRequest(
+            messages=[Message(role='user',content=prompt)],
+            system='You are SPARKLE Gen-2 planner. Produce strict JSON only.',
+            max_output_tokens=1024,
+            temperature=0.0,
+            thinking=False,
+            metadata={
+                'operation':'gen2_plan',
+                'required_capabilities':['planning','reasoning'],
+            },
+        )
+
         architecture_route=None
-        if hasattr(self,'capability_router'):
-            architecture_route=self.capability_router.require(['planning','reasoning'],input_modalities=['text'],output_modalities=['text'])
-        decision,response=self.system.model_router.complete(request,'reasoning',modalities={'text'},latency_policy='deep',max_timeout_seconds=120)
-        if architecture_route is not None and getattr(decision,'record_id',architecture_route.selected.record_id)!=architecture_route.selected.record_id:raise RuntimeError('gen2_capability_route_mismatch')
-        if decision.provider!='nvidia' or 'nemotron' not in decision.model.lower() or decision.fallback:
+        if getattr(self,'capability_router',None) is not None:
+            architecture_route=self.capability_router.require(
+                ['planning','reasoning'],
+                input_modalities=['text'],
+                output_modalities=['text'],
+            )
+
+        decision,response=self.system.model_router.complete(
+            request,
+            'reasoning',
+            modalities={'text'},
+            latency_policy='deep',
+            max_timeout_seconds=120,
+        )
+
+        if (
+            architecture_route is not None
+            and getattr(
+                decision,
+                'record_id',
+                architecture_route.selected.record_id
+            ) != architecture_route.selected.record_id
+        ):
+            raise RuntimeError('gen2_capability_route_mismatch')
+
+        if (
+            decision.provider!='nvidia'
+            or 'nemotron' not in decision.model.lower()
+            or decision.fallback
+        ):
             raise RuntimeError('nemotron_only_route_violation')
+
         text=response.text.strip()
-        try: raw=json.loads(text)
-        except json.JSONDecodeError as exc: raise RuntimeError('planner_invalid_json') from exc
-        if not isinstance(raw,dict): raise RuntimeError('planner_output_not_object')
+
+        try:
+            raw=json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError('planner_invalid_json') from exc
+
+        if not isinstance(raw,dict):
+            raise RuntimeError('planner_output_not_object')
+
         raw['goal_id']=goal['goal_id']
-        prov={'request_id':response.provider_request_id or uuid.uuid4().hex,'provider':decision.provider,'model':decision.model,'capability':decision.capability,'requested_capabilities':['planning','reasoning'],'selection_reason':decision.selection_reason,'health':decision.health,'trace_id':None,'fallback':decision.fallback}
+
+        # preferred_tool is a Gen-2-derived execution field, not planner input.
+        # Reject accidental emission explicitly rather than allowing a later
+        # dataclass TypeError.
+        for step in raw.get('steps',[]):
+            if isinstance(step,dict) and 'preferred_tool' in step:
+                raise RuntimeError(
+                    'planner_derived_field_forbidden:preferred_tool'
+                )
+
+        prov={
+            'request_id':response.provider_request_id or uuid.uuid4().hex,
+            'provider':decision.provider,
+            'model':decision.model,
+            'capability':decision.capability,
+            'requested_capabilities':['planning','reasoning'],
+            'selection_reason':decision.selection_reason,
+            'health':decision.health,
+            'trace_id':None,
+            'fallback':decision.fallback,
+        }
+
         return {'proposal':raw,'provenance':prov}
+
     def approval_status(self,approval_id,tool):
         if tool!='memory_write' or not hasattr(self.system,'memory_review'):
             return {'status':'UNKNOWN','verified':False,'reason':'unsupported_approval_type'}
@@ -206,7 +422,84 @@ class LocalGen1Gateway:
             return {'verified':verified,'method':'exact approved workspace package artifact reread','artifact_id':aid,'project_name':project,'artifact_name':row.get('artifact_name'),'artifact_sha256':artifact_digest,'source_digest':source_digest,'archive_format':manifest.get('archive_format'),'file_count':len(metadata),'source_bytes':total}
         return {'verified':True,'method':'delegated action uses existing independent boundary'}
 
+    def _attest_workspace_isolation(self,output):
+        try:
+            from .protected_secrets import protected_worker_runtime_status
+            health=protected_worker_runtime_status()
+        except Exception:
+            health={'reachable':False,'ready':False}
+        claims=dict(output.get('sandbox_claims') or {}) if isinstance(output,dict) else {}
+        expected_id=str(getattr(self._external_workspace_worker,'expected_worker_id','') or '')
+        expected_canaries={'host_filesystem_read','host_filesystem_write','workspace_escape','secret_environment','prohibited_network','host_process_access','artifact_modification'}
+        canaries=health.get('canaries') if isinstance(health.get('canaries'),dict) else {}
+        verified=bool(
+            output.get('response_verified')
+            and expected_id
+            and claims.get('worker_id')==expected_id==health.get('worker_id')
+            and claims.get('filesystem_isolation') is True
+            and claims.get('network_isolation') is True
+            and claims.get('ephemeral') is True
+            and claims.get('resource_limits') is True
+            and health.get('reachable') is True
+            and health.get('ready') is True
+            and health.get('direct_tls') is True
+            and health.get('credentials_exposed') is False
+            and health.get('executor_mode')=='bubblewrap'
+            and health.get('preflight_passed') is True
+            and health.get('filesystem_isolation') is True
+            and health.get('network_isolation') is True
+            and health.get('ephemeral_workspace') is True
+            and health.get('resource_limits') is True
+            and health.get('unsafe_process_mode') is False
+            and health.get('hostile_canaries_passed') is True
+            and health.get('preflight_canary_evidence_complete') is True
+            and health.get('isolation_profile')=='SPARKLE-WORKER-BUBBLEWRAP/1'
+            and set(canaries)==expected_canaries
+            and all(canaries.values())
+        )
+        evidence={
+            'verified':verified,
+            'method':'signed worker result + TLS worker health + Bubblewrap hostile-canary attestation',
+            'worker_identity_match':bool(expected_id and claims.get('worker_id')==expected_id==health.get('worker_id')),
+            'filesystem_isolation':bool(claims.get('filesystem_isolation') and health.get('filesystem_isolation')),
+            'network_isolation':bool(claims.get('network_isolation') and health.get('network_isolation')),
+            'ephemeral_workspace':bool(claims.get('ephemeral') and health.get('ephemeral_workspace')),
+            'resource_limits':bool(claims.get('resource_limits') and health.get('resource_limits')),
+            'process_isolation':bool(canaries.get('host_process_access')),
+            'environment_sanitization':bool(canaries.get('secret_environment')),
+            'credential_isolation':bool(health.get('credentials_exposed') is False and canaries.get('secret_environment')),
+            'host_filesystem_read_blocked':bool(canaries.get('host_filesystem_read')),
+            'host_filesystem_write_blocked':bool(canaries.get('host_filesystem_write')),
+            'workspace_escape_blocked':bool(canaries.get('workspace_escape')),
+            'direct_tls':bool(health.get('direct_tls')),
+            'hostile_canaries_passed':bool(health.get('hostile_canaries_passed') and canaries and all(canaries.values())),
+            'isolation_profile':health.get('isolation_profile'),
+        }
+        return evidence
+
+    def _attest_strict_workspace_isolation(self,output):
+        worker=self._strict_workspace_worker
+        if worker is None:return {'verified':False,'method':'strict workspace worker unavailable'}
+        try:health=worker.status()
+        except Exception:return {'verified':False,'method':'strict workspace worker health unavailable'}
+        executor=dict(health.get('executor') or {});claims=dict(output.get('sandbox_claims') or {}) if isinstance(output,dict) else {};canaries=dict(executor.get('canaries') or {});expected={'host_filesystem_read','host_filesystem_write','workspace_escape','secret_environment','prohibited_network','host_process_access','artifact_modification'}
+        worker_id=str(output.get('worker_id') or '');identity_ok=bool(worker_id.startswith('sparkle-gen2-strict-') and worker_id==health.get('worker_id')==claims.get('worker_id'))
+        verified=bool(output.get('response_verified') and identity_ok and claims.get('filesystem_isolation') is True and claims.get('network_isolation') is True and claims.get('ephemeral') is True and claims.get('resource_limits') is True and health.get('configured') is True and health.get('credentials_exposed') is False and executor.get('mode')=='bubblewrap' and executor.get('preflight_passed') is True and executor.get('filesystem_isolation') is True and executor.get('network_isolation') is True and executor.get('ephemeral_workspace') is True and executor.get('resource_limits') is True and executor.get('unsafe_process_mode') is False and executor.get('hostile_canaries_passed') is True and executor.get('preflight_canary_evidence_complete') is True and executor.get('isolation_profile')=='SPARKLE-GEN2-WORKSPACE-STRICT/1' and set(canaries)==expected and all(canaries.values()))
+        return {'verified':verified,'method':'strict Bubblewrap status reread + hostile-canary attestation','worker_identity_match':identity_ok,'filesystem_isolation':bool(claims.get('filesystem_isolation') and executor.get('filesystem_isolation')),'network_isolation':bool(claims.get('network_isolation') and executor.get('network_isolation')),'ephemeral_workspace':bool(claims.get('ephemeral') and executor.get('ephemeral_workspace')),'resource_limits':bool(claims.get('resource_limits') and executor.get('resource_limits')),'process_isolation':bool(canaries.get('host_process_access')),'environment_sanitization':bool(canaries.get('secret_environment')),'credential_isolation':bool(health.get('credentials_exposed') is False and canaries.get('secret_environment')),'host_filesystem_read_blocked':bool(canaries.get('host_filesystem_read')),'host_filesystem_write_blocked':bool(canaries.get('host_filesystem_write')),'workspace_escape_blocked':bool(canaries.get('workspace_escape')),'hostile_canaries_passed':bool(canaries and all(canaries.values())),'direct_tls':False,'local_fixed_boundary':True,'isolation_profile':executor.get('isolation_profile')}
+
     def invoke(self,tool,arguments):
+        if tool=='workspace_test':
+            worker=self._strict_workspace_worker
+            if worker is None:return ToolObservation(False,tool,{'error':'strict isolated workspace worker unavailable'},{'verified':False,'reason':'strict_isolated_workspace_worker_unavailable'})
+            try:
+                if set(arguments)!={'project_name','approved'} or arguments.get('approved') is not True:raise PermissionError('workspace test requires exact approved scope')
+                output=worker.run(str(arguments['project_name']))
+                output_limited=bool(output.get('output_limited'));isolation=self._attest_strict_workspace_isolation(output)
+                output=dict(output)|{'isolation_verified':bool(isolation.get('verified')),'isolation_evidence':isolation}
+                verification=self._verify_observation(tool,arguments,output)
+                return ToolObservation(bool(verification.get('verified')),tool,output,verification)
+            except Exception as exc:
+                return ToolObservation(False,tool,{'error':'isolated workspace test failed','error_type':type(exc).__name__},{'verified':False,'reason':'isolated_worker_execution_failed'})
         if tool not in self.system.tools.names:
             return ToolObservation(False,tool,{'error':'tool unavailable'},{'verified':False,'reason':'not_registered'})
         try: output=self.system.tools.execute(tool,arguments,allowed={tool})
@@ -237,8 +530,16 @@ class LocalGen1Gateway:
             verified=bool(row and row.get('status')=='passed' and row.get('failed')==0 and output.get('status')=='passed')
             return {'verified':verified,'method':'re-read persisted Gen-1 verification run','verification_id':vid}
         if tool=='workspace_test':
-            tid=output.get('test_run_id');project=output.get('project_name')
-            row=next((r for r in self.system.workspace_tests.list(limit=100) if r.get('test_run_id')==tid and r.get('project_name')==project),None)
+            project=output.get('project_name');external_id=output.get('external_test_run_id');strict=str(output.get('worker_id') or '').startswith('sparkle-gen2-strict-')
+            worker=getattr(self,'_strict_workspace_worker',None) if strict else getattr(self,'_external_workspace_worker',None)
+            if external_id is not None and worker is not None:
+                row=next((r for r in worker.list(limit=100) if r.get('external_test_run_id')==external_id and r.get('project_name')==project),None);isolation=dict(output.get('isolation_evidence') or {})
+                if strict:
+                    verified=bool(row and row.get('status')=='passed' and row.get('returncode')==0 and not row.get('timed_out') and not output.get('output_limited') and row.get('response_verified') and output.get('response_verified') and output.get('isolation_verified') and isolation.get('verified') and dict(row.get('sandbox_claims') or {})==dict(output.get('sandbox_claims') or {}))
+                    return {'verified':verified,'method':'re-read strict worker run + independent Bubblewrap isolation attestation','external_test_run_id':external_id,'response_verified':bool(output.get('response_verified')),'output_limited':bool(output.get('output_limited')),'isolation_verified':bool(output.get('isolation_verified')),'filesystem_isolation':bool(isolation.get('filesystem_isolation')),'network_isolation':bool(isolation.get('network_isolation')),'process_isolation':bool(isolation.get('process_isolation')),'environment_sanitization':bool(isolation.get('environment_sanitization')),'credential_isolation':bool(isolation.get('credential_isolation')),'resource_limits':bool(isolation.get('resource_limits')),'host_filesystem_read_blocked':bool(isolation.get('host_filesystem_read_blocked')),'host_filesystem_write_blocked':bool(isolation.get('host_filesystem_write_blocked')),'workspace_escape_blocked':bool(isolation.get('workspace_escape_blocked')),'hostile_canaries_passed':bool(isolation.get('hostile_canaries_passed')),'direct_tls':False,'local_fixed_boundary':True,'isolation_profile':isolation.get('isolation_profile'),'worker_id':output.get('worker_id')}
+                verified=bool(row and row.get('status')=='passed' and row.get('returncode')==0 and not row.get('timed_out') and row.get('response_verified') and output.get('response_verified') and output.get('isolation_verified'))
+                return {'verified':verified,'method':'legacy external worker result reread; strict isolation evidence required for production acceptance','external_test_run_id':external_id,'response_verified':bool(output.get('response_verified')),'isolation_verified':bool(output.get('isolation_verified'))}
+            tid=output.get('test_run_id');row=next((r for r in self.system.workspace_tests.list(limit=100) if r.get('test_run_id')==tid and r.get('project_name')==project),None)
             verified=bool(row and row.get('status')=='passed' and row.get('returncode')==0 and not row.get('timed_out'))
             return {'verified':verified,'method':'re-read persisted Gen-1 test run','test_run_id':tid}
         if tool=='workspace_package':

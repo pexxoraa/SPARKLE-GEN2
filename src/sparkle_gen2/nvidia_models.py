@@ -4,12 +4,37 @@ from typing import Any,Callable,Iterable
 from sparkle.model import ModelAdapter,ModelError,ModelRequest,ModelResponse
 from sparkle.secrets import SecretNotFoundError,SecretResolver
 
+
+class _NoProviderRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        raise ModelError('Provider redirect is not permitted',retryable=False,category='security_boundary')
+
+def _provider_opener():
+    # Default HTTPSHandler validates TLS; credentials must never follow redirects.
+    return urllib.request.build_opener(_NoProviderRedirect()).open
+
+def _validated_endpoint(value,*,test_transport=False):
+    from urllib.parse import urlsplit
+    p=urlsplit(str(value))
+    if p.scheme!='https' or not p.hostname or p.username or p.password or p.fragment:
+        raise ValueError('provider_endpoint_requires_tls')
+    if not test_transport and p.hostname not in {'integrate.api.nvidia.com','ai.api.nvidia.com'}:
+        raise ValueError('provider_endpoint_not_allowlisted')
+    if p.port not in {None,443}:raise ValueError('provider_endpoint_port_not_allowlisted')
+    return str(value)
+
+def _read_response(response,limit=16_000_000):
+    raw=response.read(limit+1)
+    if not isinstance(raw,bytes) or len(raw)>limit:raise ValueError('provider_response_exceeds_limit')
+    return raw
+
+
 class NVIDIAEmbeddingAdapter(ModelAdapter):
     """NVIDIA NIM embeddings adapter exposed through the existing ModelRegistry factory boundary."""
     provider='nvidia'
     supported_modalities=frozenset({'text'})
     def __init__(self,config:dict[str,Any],secrets:SecretResolver,*,opener:Callable[...,Any]|None=None,sleeper:Callable[[float],None]=time.sleep):
-        self._config=config;self._secrets=secrets;self._opener=opener or urllib.request.urlopen;self._sleeper=sleeper;self.model_id=str(config['model_id']);self._base_url=str(config['base_url']);self._secret_refs=list(config['secret_refs']);self._timeout=float(config.get('timeout_seconds',120));retry=config.get('retry',{});self._attempts=max(1,int(retry.get('attempts',3)));self._base_delay=max(0.0,float(retry.get('base_delay_seconds',.5)))
+        self._config=config;self._secrets=secrets;self._opener=opener or _provider_opener();self._sleeper=sleeper;self.model_id=str(config['model_id']);self._base_url=_validated_endpoint(config['base_url'],test_transport=opener is not None);self._secret_refs=list(config['secret_refs']);self._timeout=float(config.get('timeout_seconds',120));retry=config.get('retry',{});self._attempts=max(1,min(3,int(retry.get('attempts',3))));self._base_delay=max(0.0,float(retry.get('base_delay_seconds',.5)))
     def health(self):return {'provider':self.provider,'model':self.model_id,'configured':any(self._secrets.status(self._secret_refs).values()),'endpoint':self._base_url,'enabled':bool(self._config.get('enabled',True)),'adapter_modalities':['text'],'operation':'embeddings'}
     def _headers(self):
         try:key=self._secrets.first(self._secret_refs)
@@ -21,18 +46,21 @@ class NVIDIAEmbeddingAdapter(ModelAdapter):
     def embed(self,texts:str|Iterable[str],*,input_type='query')->list[list[float]]:
         values=[texts] if isinstance(texts,str) else list(texts)
         if not values or len(values)>128 or any(not isinstance(x,str) or not x.strip() or len(x.encode('utf-8'))>1_000_000 for x in values):raise ValueError('embedding input must contain 1..128 bounded non-empty text values')
+        if sum(len(x.encode('utf-8')) for x in values)>1_000_000:raise ValueError('embedding total input exceeds limit')
         if input_type not in {'query','passage'}:raise ValueError('embedding input_type must be query or passage')
         payload={'input':values,'model':self.model_id,'input_type':input_type};body=json.dumps(payload,separators=(',',':')).encode();last=None
         for attempt in range(self._attempts):
             req=urllib.request.Request(self._base_url,data=body,headers=self._headers(),method='POST')
             try:
-                with self._opener(req,timeout=self._timeout) as response:raw=response.read()
+                with self._opener(req,timeout=self._timeout) as response:raw=_read_response(response)
                 data=json.loads(raw.decode());rows=data.get('data') if isinstance(data,dict) else None
                 if not isinstance(rows,list) or len(rows)!=len(values):raise TypeError('embedding response data mismatch')
-                ordered=sorted(rows,key=lambda r:int(r.get('index',0)));vectors=[]
+                indices=[r.get('index') for r in rows if isinstance(r,dict)]
+                if len(indices)!=len(values) or any(isinstance(i,bool) or not isinstance(i,int) for i in indices) or set(indices)!=set(range(len(values))):raise TypeError('embedding indices invalid')
+                ordered=sorted(rows,key=lambda r:r['index']);vectors=[]
                 for row in ordered:
                     vector=row.get('embedding') if isinstance(row,dict) else None
-                    if not isinstance(vector,list) or not vector or any(isinstance(x,bool) or not isinstance(x,(int,float)) for x in vector):raise TypeError('embedding vector invalid')
+                    if not isinstance(vector,list) or not vector or any(isinstance(x,bool) or not isinstance(x,(int,float)) or not __import__('math').isfinite(float(x)) for x in vector):raise TypeError('embedding vector invalid')
                     vectors.append([float(x) for x in vector])
                 dims={len(v) for v in vectors}
                 if len(dims)!=1:raise TypeError('embedding dimensions mismatch')
@@ -52,7 +80,7 @@ class NVIDIARerankingAdapter(ModelAdapter):
     provider='nvidia'
     supported_modalities=frozenset({'text'})
     def __init__(self,config:dict[str,Any],secrets:SecretResolver,*,opener:Callable[...,Any]|None=None,sleeper:Callable[[float],None]=time.sleep):
-        self._config=config;self._secrets=secrets;self._opener=opener or urllib.request.urlopen;self._sleeper=sleeper;self.model_id=str(config['model_id']);self._base_url=str(config['base_url']);self._secret_refs=list(config['secret_refs']);self._timeout=float(config.get('timeout_seconds',120));self.max_candidates=max(1,min(int(config.get('max_candidates',64)),128));retry=config.get('retry',{});self._attempts=max(1,int(retry.get('attempts',3)));self._base_delay=max(0.0,float(retry.get('base_delay_seconds',.5)))
+        self._config=config;self._secrets=secrets;self._opener=opener or _provider_opener();self._sleeper=sleeper;self.model_id=str(config['model_id']);self._base_url=_validated_endpoint(config['base_url'],test_transport=opener is not None);self._secret_refs=list(config['secret_refs']);self._timeout=float(config.get('timeout_seconds',120));self.max_candidates=max(1,min(int(config.get('max_candidates',64)),128));retry=config.get('retry',{});self._attempts=max(1,min(3,int(retry.get('attempts',3))));self._base_delay=max(0.0,float(retry.get('base_delay_seconds',.5)))
     def health(self):return {'provider':self.provider,'model':self.model_id,'configured':any(self._secrets.status(self._secret_refs).values()),'endpoint':self._base_url,'enabled':bool(self._config.get('enabled',True)),'adapter_modalities':['text'],'operation':'ranking','max_candidates':self.max_candidates}
     def _headers(self):
         try:key=self._secrets.first(self._secret_refs)
@@ -85,7 +113,7 @@ class NVIDIARerankingAdapter(ModelAdapter):
         for attempt in range(self._attempts):
             req=urllib.request.Request(self._base_url,data=body,headers=self._headers(),method='POST')
             try:
-                with self._opener(req,timeout=self._timeout) as response:raw=response.read()
+                with self._opener(req,timeout=self._timeout) as response:raw=_read_response(response)
                 data=json.loads(raw.decode());return self._validated_rankings(data,len(values))
             except urllib.error.HTTPError as exc:last=self._error(exc.code)
             except TimeoutError:last=ModelError('NVIDIA reranking request timed out',retryable=True,category='timeout')
@@ -101,7 +129,7 @@ class NVIDIAContentSafetyAdapter(ModelAdapter):
     provider='nvidia'
     supported_modalities=frozenset({'text'})
     def __init__(self,config:dict[str,Any],secrets:SecretResolver,*,opener:Callable[...,Any]|None=None,sleeper:Callable[[float],None]=time.sleep):
-        self._config=config;self._secrets=secrets;self._opener=opener or urllib.request.urlopen;self._sleeper=sleeper;self.model_id=str(config['model_id']);self._base_url=str(config['base_url']);self._secret_refs=list(config['secret_refs']);self._timeout=float(config.get('timeout_seconds',120));retry=config.get('retry',{});self._attempts=max(1,int(retry.get('attempts',3)));self._base_delay=max(0.0,float(retry.get('base_delay_seconds',.5)))
+        self._config=config;self._secrets=secrets;self._opener=opener or _provider_opener();self._sleeper=sleeper;self.model_id=str(config['model_id']);self._base_url=_validated_endpoint(config['base_url'],test_transport=opener is not None);self._secret_refs=list(config['secret_refs']);self._timeout=float(config.get('timeout_seconds',120));retry=config.get('retry',{});self._attempts=max(1,min(3,int(retry.get('attempts',3))));self._base_delay=max(0.0,float(retry.get('base_delay_seconds',.5)))
     def health(self):return {'provider':self.provider,'model':self.model_id,'configured':any(self._secrets.status(self._secret_refs).values()),'endpoint':self._base_url,'enabled':bool(self._config.get('enabled',True)),'adapter_modalities':['text'],'operation':'advisory_safety'}
     def _headers(self):
         try:key=self._secrets.first(self._secret_refs)
@@ -133,7 +161,7 @@ class NVIDIAContentSafetyAdapter(ModelAdapter):
         for attempt in range(self._attempts):
             req=urllib.request.Request(self._base_url,data=body,headers=self._headers(),method='POST')
             try:
-                with self._opener(req,timeout=self._timeout) as response:raw=response.read()
+                with self._opener(req,timeout=self._timeout) as response:raw=_read_response(response)
                 data=json.loads(raw.decode());choices=data.get('choices') if isinstance(data,dict) else None
                 if not isinstance(choices,list) or not choices or not isinstance(choices[0],dict) or not isinstance(choices[0].get('message'),dict):raise TypeError('content-safety response choices missing')
                 result=self._normalize_content(choices[0]['message'].get('content'));result['provider_request_id']=str(data.get('id')) if data.get('id') else None;return result
@@ -157,10 +185,14 @@ class NVIDIAVoiceChatAdapter(ModelAdapter):
     provider='nvidia'
     supported_modalities=frozenset({'text','audio'})
     def __init__(self,config:dict[str,Any],secrets:SecretResolver,*,transport=None):
-        self._config=dict(config);self._secrets=secrets;self._transport=transport;self.model_id=str(config['model_id']);self._secret_refs=list(config.get('secret_refs',[]));self.function_id=str(config.get('function_id',''));self.function_version=str(config.get('function_version',''));self.transport_verified=bool(config.get('transport_verified',False) or transport is not None)
+        self._config=dict(config);self._secrets=secrets;self.model_id=str(config['model_id']);self._secret_refs=list(config.get('secret_refs',[]));self.function_id=str(config.get('function_id',''));self.function_version=str(config.get('function_version',''));self.transport_verified=bool(config.get('transport_verified',False) or transport is not None)
+        self._transport=transport
+        if self._transport is None and self.transport_verified:
+            from .nvidia_voicechat_transport import NVIDIAHostedVoiceChatTransport
+            self._transport=NVIDIAHostedVoiceChatTransport(function_id=self.function_id,secrets=secrets,secret_refs=self._secret_refs,websocket_url=config.get('websocket_url'))
     def health(self):
         secret_status=self._secrets.status(self._secret_refs)
-        return {'provider':self.provider,'model':self.model_id,'configured':bool(self._secret_refs) and all(secret_status.values()),'enabled':bool(self._config.get('enabled',True)),'adapter_modalities':['text','audio'],'operation':'realtime_voicechat','supports_streaming':True,'transport_verified':self.transport_verified,'function_id':self.function_id or None,'function_version':self.function_version or None,'health_path':self._config.get('health_path')}
+        return {'provider':self.provider,'model':self.model_id,'configured':bool(self._secret_refs) and all(secret_status.values()),'enabled':bool(self._config.get('enabled',True)),'adapter_modalities':['text','audio'],'operation':'realtime_voicechat','supports_streaming':True,'transport_verified':self.transport_verified,'transport_kind':self._config.get('transport_kind'),'hosted_endpoint_configured':bool(self._config.get('websocket_url')),'function_id':self.function_id or None,'function_version':self.function_version or None,'health_path':self._config.get('health_path')}
     def _require_transport(self):
         if self._transport is None or not self.transport_verified:raise ModelError('NVIDIA VoiceChat streaming transport is not verified/configured; direct endpoint guessing is prohibited',retryable=False,category='external_dependency')
         return self._transport
@@ -180,7 +212,7 @@ class NVIDIAImageGenerationAdapter(ModelAdapter):
     supported_modalities=frozenset({'text'})
     MAX_PROMPT_BYTES=16000;MAX_DECODED_BYTES=10_000_000
     def __init__(self,config:dict[str,Any],secrets:SecretResolver,*,opener:Callable[...,Any]|None=None,sleeper:Callable[[float],None]=time.sleep):
-        self._config=dict(config);self._secrets=secrets;self._opener=opener or urllib.request.urlopen;self._sleeper=sleeper;self.model_id=str(config['model_id']);self._base_url=str(config['base_url']);self._secret_refs=list(config['secret_refs']);self._timeout=float(config.get('timeout_seconds',180));retry=config.get('retry',{});self._attempts=max(1,int(retry.get('attempts',2)));self._base_delay=max(0.0,float(retry.get('base_delay_seconds',1.0)))
+        self._config=dict(config);self._secrets=secrets;self._opener=opener or _provider_opener();self._sleeper=sleeper;self.model_id=str(config['model_id']);self._base_url=_validated_endpoint(config['base_url'],test_transport=opener is not None);self._secret_refs=list(config['secret_refs']);self._timeout=float(config.get('timeout_seconds',180));retry=config.get('retry',{});self._attempts=max(1,min(3,int(retry.get('attempts',2))));self._base_delay=max(0.0,float(retry.get('base_delay_seconds',1.0)))
     def health(self):return {'provider':self.provider,'model':self.model_id,'configured':any(self._secrets.status(self._secret_refs).values()),'endpoint':self._base_url,'enabled':bool(self._config.get('enabled',True)),'adapter_modalities':['text'],'operation':'image_generation'}
     def _headers(self):
         try:key=self._secrets.first(self._secret_refs)
@@ -205,7 +237,7 @@ class NVIDIAImageGenerationAdapter(ModelAdapter):
             req=urllib.request.Request(self._base_url,data=body,headers=self._headers(),method='POST')
             try:
                 with self._opener(req,timeout=self._timeout) as response:
-                    raw=response.read();headers=getattr(response,'headers',{})
+                    raw=_read_response(response);headers=getattr(response,'headers',{})
                 data=json.loads(raw.decode());artifacts=data.get('artifacts') if isinstance(data,dict) else None
                 if not isinstance(artifacts,list) or len(artifacts)!=1 or not isinstance(artifacts[0],dict):raise TypeError('image artifacts response invalid')
                 art=artifacts[0];encoded=art.get('base64')

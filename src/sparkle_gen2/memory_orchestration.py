@@ -1,6 +1,7 @@
 from __future__ import annotations
 import hashlib,re
 from dataclasses import asdict,dataclass,field
+from datetime import UTC,datetime,timedelta
 from .core_time import now
 from .models import CriterionStatus,GoalStatus,PermissionEffect
 
@@ -31,6 +32,10 @@ class MemoryCandidate:
     gen1_approval_id:str|None=None
     memory_id:str|None=None
     review_verification:dict=field(default_factory=dict)
+    owner_user_id:str='user'
+    fingerprint:str=''
+    expires_at:str|None=None
+    supersedes_candidate_id:str|None=None
     def to_dict(self):return asdict(self)
 
 class MemoryCandidateAnalyzer:
@@ -57,40 +62,61 @@ class MemoryCandidateAnalyzer:
         criteria=list(criteria)
         if not criteria or any(c.status!=CriterionStatus.SATISFIED for c in criteria):return []
         request=self._normalize(goal.user_request)
-        if not request or self._secret(request):return []
-        candidates=[]
+        if not request or len(request)>8000 or self._secret(request):return []
+        selections=[]
         for category,pattern,confidence,reason in self._RULES:
             match=pattern.fullmatch(request)
-            if not match:continue
-            value=self._normalize(match.group(1))[:self.max_value_chars]
-            if len(value)<4 or self._secret(value):return []
-            digest=hashlib.sha256(f'{goal.goal_id}|{category}|{value.casefold()}'.encode()).hexdigest()
-            evidence={
-                'goal_status':goal.status.value,
-                'task_status':run.status,
-                'verified_steps':list(run.completed_steps),
-                'criteria':[{'description':c.description,'status':c.status.value,'evidence':dict(c.evidence)} for c in criteria],
-            }
+            if match:
+                value=self._normalize(match.group(1))
+                if 4<=len(value)<=self.max_value_chars and not self._secret(value):
+                    selections.append((category,value,confidence,reason,'user_statement'))
+                break
+        # Verified durable outputs are useful even without an explicit "remember" request.
+        # Only opaque artifact references are retained; model reasoning and raw output are excluded.
+        if not selections:
+            for reference in list(run.artifacts)[:self.max_candidates]:
+                if isinstance(reference,str) and re.fullmatch(r'artifact:[A-Za-z0-9_-]{1,64}',reference):
+                    selections.append(('learning','Verified completed work produced '+reference,.90,'verified durable output','artifact_reference'))
+        owner=str(getattr(goal,'user_id','user'))
+        candidates=[]
+        for category,value,confidence,reason,source in selections[:self.max_candidates]:
+            fingerprint=hashlib.sha256(f'{owner}|{category}|{value.casefold()}'.encode()).hexdigest()
+            digest=hashlib.sha256(f'{goal.goal_id}|{fingerprint}'.encode()).hexdigest()
+            evidence={'goal_status':goal.status.value,'task_status':run.status,
+                      'verified_steps':list(run.completed_steps)[:100],
+                      'criteria_satisfied':len(criteria),'source_kind':source}
             candidates.append(MemoryCandidate(
                 candidate_id='memcand_'+digest[:32],goal_id=goal.goal_id,task_run_id=run.task_run_id,
-                trace_id=run.trace_id or '',value=value,category=category,memory_key='completion_'+digest[:20],
-                reason=reason,source='verified_completed_goal:user_statement',evidence=evidence,
+                trace_id=run.trace_id or '',value=value,category=category,memory_key='completion_'+fingerprint[:20],
+                reason=reason,source='verified_completed_goal:'+source,evidence=evidence,
                 confidence=confidence,privacy_classification='PERSONAL',created_at=now(),
+                owner_user_id=owner,fingerprint=fingerprint,
+                expires_at=(datetime.now(UTC)+timedelta(days=90)).isoformat() if category=='goals' else None,
             ))
-            break
-        return candidates[:self.max_candidates]
+        return candidates
 
 class MemoryCandidateService:
     """Stages candidates in Gen-2 and delegates authoritative persistence to Gen-1 review."""
     FORBIDDEN_APPROVERS={'model','assistant','nemotron','system','system_cancel'}
     def __init__(self,store,gen1,policy,*,analyzer=None):
         self.store=store;self.gen1=gen1;self.policy=policy;self.analyzer=analyzer or MemoryCandidateAnalyzer()
+    @staticmethod
+    def expired(candidate):
+        if not candidate.expires_at:return False
+        try:return datetime.fromisoformat(candidate.expires_at)<=datetime.now(UTC)
+        except (ValueError,TypeError):return True
     def analyze_completion(self,goal,run,criteria):
-        existing={c.candidate_id:c for c in self.list(goal.goal_id)}
+        existing=self.list()
         out=[]
         for candidate in self.analyzer.analyze(goal,run,criteria):
-            if candidate.candidate_id not in existing:self.store.save_memory_candidate(candidate)
-            out.append(existing.get(candidate.candidate_id,candidate))
+            previous=next((c for c in existing if c.candidate_id==candidate.candidate_id),None)
+            if previous is not None:
+                out.append(previous);continue
+            if any(c.owner_user_id==candidate.owner_user_id and c.fingerprint==candidate.fingerprint and c.state in {'PROPOSED','REVIEW_PENDING','PERSISTED'} and not self.expired(c) for c in existing):continue
+            permission,_=self.policy.evaluate('memory_write',candidate.owner_user_id,'completion_memory_proposal',now())
+            if permission.effect==PermissionEffect.DENY:continue
+            candidate.evidence['policy_effect']=permission.effect.value
+            self.store.save_memory_candidate(candidate);out.append(candidate);existing.append(candidate)
         return out
     def list(self,goal_id=None):
         return [MemoryCandidate(**d) for d in self.store.memory_candidates(goal_id=goal_id)]
@@ -98,7 +124,9 @@ class MemoryCandidateService:
     def decide(self,candidate_id,decision,*,actor='user'):
         candidate=self.get(candidate_id)
         if candidate.state!='PROPOSED':raise ValueError('memory candidate is not pending')
-        if actor in self.FORBIDDEN_APPROVERS or not str(actor).strip():raise PermissionError('human_approval_required')
+        if self.expired(candidate):
+            candidate.state='EXPIRED';self.store.save_memory_candidate(candidate);raise ValueError('memory candidate expired')
+        if str(actor).strip().lower() in self.FORBIDDEN_APPROVERS or not str(actor).strip():raise PermissionError('human_approval_required')
         if decision not in {'approve','reject'}:raise ValueError('decision must be approve or reject')
         candidate.approved_by=str(actor);candidate.decision_at=now()
         if decision=='reject':
@@ -119,8 +147,37 @@ class MemoryCandidateService:
         candidate.review_verification=dict(state)
         if status=='APPROVED' and state.get('verified') is True and state.get('memory_id'):
             candidate.state='PERSISTED';candidate.memory_id=str(state['memory_id'])
+            if candidate.supersedes_candidate_id:
+                previous=self.get(candidate.supersedes_candidate_id)
+                previous.state='SUPERSEDED';self.store.save_memory_candidate(previous)
         elif status=='REJECTED':candidate.state='REVIEW_REJECTED'
         self.store.save_memory_candidate(candidate);return candidate
+    def propose_correction(self,candidate_id,value,*,actor='user',owner_user_id='user'):
+        previous=self.get(candidate_id)
+        if str(actor).strip().lower() in self.FORBIDDEN_APPROVERS or not str(actor).strip():raise PermissionError('human_approval_required')
+        if previous.owner_user_id!=owner_user_id:raise PermissionError('memory_owner_mismatch')
+        if previous.state!='PERSISTED':raise ValueError('persisted_memory_required')
+        if not isinstance(value,str):raise ValueError('bounded_correction_required')
+        value=self.analyzer._normalize(value)
+        if not 4<=len(value)<=self.analyzer.max_value_chars or self.analyzer._secret(value):raise ValueError('unsafe_memory_correction')
+        fingerprint=hashlib.sha256(f'{owner_user_id}|{previous.category}|{value.casefold()}'.encode()).hexdigest()
+        identity='memcand_'+hashlib.sha256(f'correction|{candidate_id}|{fingerprint}'.encode()).hexdigest()[:32]
+        try:return self.get(identity)
+        except KeyError:pass
+        candidate=MemoryCandidate(identity,previous.goal_id,previous.task_run_id,previous.trace_id,value,previous.category,
+            previous.memory_key,'human proposed correction','human_correction',
+            {'supersedes_candidate_id':previous.candidate_id},1.0,previous.privacy_classification,now(),
+            owner_user_id=owner_user_id,fingerprint=fingerprint,supersedes_candidate_id=previous.candidate_id)
+        self.store.save_memory_candidate(candidate);return candidate
+    def recall(self,query,*,owner_user_id='user',limit=5):
+        if not isinstance(query,str) or len(query)>1000 or not 1<=limit<=20:raise ValueError('invalid_memory_query')
+        terms=set(re.findall(r'[a-z0-9]+',query.lower()))
+        candidates=[c for c in self.list() if c.owner_user_id==owner_user_id and c.state=='PERSISTED' and not self.expired(c)]
+        candidates.sort(key=lambda c:(-len(terms & set(re.findall(r'[a-z0-9]+',c.value.lower()))),c.candidate_id))
+        return [{'candidate_id':c.candidate_id,'value':c.value,'category':c.category,'memory_id':c.memory_id,
+                 'source_goal':c.goal_id,'trace_id':c.trace_id,'verified':True} for c in candidates[:limit]
+                if not terms or terms & set(re.findall(r'[a-z0-9]+',c.value.lower()))]
+
     def candidate_for_memory(self,memory_id):
         rows=self.store.memory_candidates(memory_id=str(memory_id));return MemoryCandidate(**rows[0]) if rows else None
 

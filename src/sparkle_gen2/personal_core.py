@@ -1,22 +1,67 @@
 from __future__ import annotations
-import json,os,ssl,sys
+import base64,binascii,json,os,ssl,sys
 from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs,urlparse
+from sparkle.content import ContentEnvelope,ContentPart
+from sparkle.contracts import Message
+from sparkle.model import ModelRequest
 from .background import BackgroundTaskService
 from .autonomy import AutonomyController
 from .cli import build_components,data_path
 from .conversations import ConversationService
 from .device_identity import DeviceIdentityService
 from .device_routing import DeviceRouter
+from .multimodal import MultimodalGateway
 from .notifications import NotificationIntelligenceService
-from .voice_runtime import VoiceSessionService
+from .voice_runtime import VoiceInputFrame,VoiceSessionService
+from .core_time import now
 
 class PersonalCore:
     def __init__(self,components=None):
-        self.store,self.agent,self.sessions=components or build_components();self.devices=DeviceIdentityService(self.store);self.router=DeviceRouter(self.devices);self.notifications=getattr(self.agent,'notifications',None) or NotificationIntelligenceService(self.store);self.delivery=getattr(self.notifications,'delivery',None);self.conversations=ConversationService(self.store,self.sessions,self.agent);self.voice=VoiceSessionService(self.store,model_manager=getattr(self.agent.gen1,'model_manager',None),conversation_service=self.conversations);self.background=BackgroundTaskService(self.store,lambda:self.agent,notifier=self.notifications);self.autonomy=AutonomyController(self.store);self.operations=self.agent.operations
+        self.store,self.agent,self.sessions=components or build_components(activate_external_connectors=True);self.devices=DeviceIdentityService(self.store);self.router=DeviceRouter(self.devices);self.notifications=getattr(self.agent,'notifications',None) or NotificationIntelligenceService(self.store);self.delivery=getattr(self.notifications,'delivery',None);self.conversations=ConversationService(self.store,self.sessions,self.agent);self.voice=VoiceSessionService(self.store,model_manager=getattr(self.agent.gen1,'model_manager',None),conversation_service=self.conversations);self.multimodal=MultimodalGateway();self.background=BackgroundTaskService(self.store,lambda:self.agent,notifier=self.notifications);self.autonomy=AutonomyController(self.store);self.operations=self.agent.operations
+    @staticmethod
+    def _voice_payload(response):
+        value=response.to_dict(include_audio=False)
+        value['audio_chunks']=[x.metadata()|{'audio_base64':base64.b64encode(bytes(x.audio)).decode('ascii')} for x in response.audio_chunks]
+        return value
+    def voice_start(self,*,owner_user_id='user',conversation_session_id=None,classification='PRIVATE',persist_transcript=True):
+        session=self.voice.create(owner_user_id=owner_user_id,conversation_session_id=conversation_session_id,classification=classification,persist_transcript=bool(persist_transcript))
+        connected=self.voice.connect(session.session_id,owner_user_id=owner_user_id)
+        return connected.to_dict()
+    def voice_push(self,session_id,*,audio_base64,sequence,final=False,owner_user_id='user'):
+        if not isinstance(audio_base64,str) or not audio_base64 or len(audio_base64)>100_000:raise ValueError('voice_audio_payload_invalid_or_too_large')
+        try:raw=base64.b64decode(audio_base64,validate=True)
+        except (binascii.Error,ValueError) as exc:raise ValueError('voice_audio_payload_invalid_base64') from exc
+        frame=VoiceInputFrame(str(session_id),int(sequence),raw,now(),final=bool(final))
+        return self._voice_payload(self.voice.push(frame,owner_user_id=owner_user_id))
+    def multimodal_send(self,*,modality,mime_type,data_base64,prompt='',session_id=None,device_id=None):
+        if modality not in {'image','audio'}:raise ValueError('personal_core_multimodal_modality_not_supported')
+        if not isinstance(data_base64,str) or not data_base64 or len(data_base64)>5_500_000:raise ValueError('multimodal_payload_invalid_or_too_large')
+        if not isinstance(prompt,str) or len(prompt)>2000:raise ValueError('multimodal_prompt_invalid_or_too_large')
+        try:raw=base64.b64decode(data_base64,validate=True)
+        except (binascii.Error,ValueError) as exc:raise ValueError('multimodal_payload_invalid_base64') from exc
+        if len(raw)>4_000_000:raise ValueError('multimodal_payload_too_large')
+        item,raw=self.multimodal.prepare_bytes(raw,modality=modality,mime_type=mime_type)
+        if len(raw)>4_000_000:raise ValueError('normalized_multimodal_payload_too_large')
+        manager=getattr(self.agent.gen1,'model_manager',None)
+        if manager is None:return {'status':'BLOCKED','reason':'model_manager_unavailable','media':item.to_dict()}
+        routed=self.multimodal.route(item,manager)
+        if routed.get('status')=='BLOCKED':return {'status':'BLOCKED','reason':'model_capability_unavailable','media':routed.get('media'),'route':routed.get('route')}
+        if modality!='image':return {'status':'BLOCKED','reason':'audio_requires_realtime_voice_session','media':routed.get('media'),'route':routed.get('route')}
+        instruction=prompt.strip() or 'Describe the user-supplied image accurately and concisely.'
+        envelope=ContentEnvelope([ContentPart.text(instruction),ContentPart.binary('image',raw,media_type=item.mime_type)])
+        request=ModelRequest(messages=[Message(role='user',content=envelope)],thinking=False,max_output_tokens=256)
+        result=manager.complete(request,['multimodal','reasoning'],input_modalities=['text','image'],output_modalities=['text'])
+        interpretation=' '.join(str(result['response'].text).split())[:4000]
+        if not interpretation:raise RuntimeError('multimodal_interpretation_empty')
+        provenance=result.get('provenance') or {}
+        model_ref=f"{provenance.get('provider','unknown')}/{provenance.get('model','unknown')}"
+        agent_input=(prompt.strip()+'\n\n' if prompt.strip() else '')+f'Image interpretation from {model_ref}: {interpretation}'
+        conversation=self.conversations.send(agent_input,session_id=session_id,device_id=device_id)
+        return {'status':'COMPLETED','session_id':conversation['session_id'],'message':conversation['message'],'result':conversation['result'],'media':{'media_id':item.media_id,'modality':item.modality,'mime_type':item.mime_type,'size_bytes':item.size_bytes,'sha256':item.sha256,'metadata_stripped':True},'model':{'provider':provenance.get('provider'),'model':provenance.get('model'),'fallback':bool(provenance.get('fallback'))},'interpretation_chars':len(interpretation)}
     def operations_snapshot(self,scopes=None,*,owner_user_id='user',day=None):
         if self.operations is None:raise RuntimeError('operations_surface_unavailable')
         scopes=set(scopes or []);value=self.operations.snapshot(owner_user_id=owner_user_id,day=day)
@@ -27,13 +72,22 @@ class PersonalCore:
         if 'device_management' not in scopes:
             value['intelligence']['devices']={'status':'UNAVAILABLE','items':[]};value['intelligence']['world_state']={'status':'UNAVAILABLE','items':[]}
         return value
-    def decide_operations_approval(self,approval_id,decision,*,owner_user_id='user',actor='dashboard'):
+    def decide_approval(self,approval_id,decision,*,owner_user_id='user',actor='dashboard'):
         approval=self.store.load_approval(approval_id);goal=self.store.load_goal(approval.goal_id)
         if goal.user_id!=owner_user_id:raise PermissionError('approval_owner_mismatch')
-        decided=self.agent.decide_approval(approval_id,decision,actor=actor)
+        self.agent.decide_approval(approval_id,decision,actor=actor)
         result=self.agent.resume(approval.goal_id)
+        voice=[]
+        for row in self.store.voice_sessions(owner_user_id=owner_user_id):
+            if row.get('pending_goal_id')!=approval.goal_id:continue
+            try:voice.append(self._voice_payload(self.voice.complete_pending(row['session_id'],owner_user_id=owner_user_id,agent_result=result)))
+            except Exception as exc:voice.append({'session_id':row['session_id'],'status':'UNAVAILABLE','error_type':type(exc).__name__})
         reread=self.store.load_approval(approval_id).to_dict()
-        return {'approval':reread,'goal':result,'snapshot':self.operations.snapshot(owner_user_id=owner_user_id)}
+        return {'approval':reread,'goal':result,'voice':voice}
+    def decide_operations_approval(self,approval_id,decision,*,owner_user_id='user',actor='dashboard'):
+        value=self.decide_approval(approval_id,decision,owner_user_id=owner_user_id,actor=actor)
+        value['snapshot']=self.operations.snapshot(owner_user_id=owner_user_id)
+        return value
     def state(self,scopes=None):
         scopes=set(scopes or []);out={}
         if 'task_status' in scopes:out.update({'goals':self.store.recent_goals(50),'tasks':self.store.all_task_runs(100),'background_tasks':[x.to_dict() for x in self.store.background_tasks()]})
@@ -47,6 +101,10 @@ class PersonalCore:
         if 'artifacts' in scopes:
             fn=getattr(self.agent.gen1,'artifacts',None);out['artifacts']=fn(50) if callable(fn) else []
         return out
+    def close(self):
+        connectors=getattr(self.agent,'connectors',None)
+        closed=connectors.close() if connectors is not None and callable(getattr(connectors,'close',None)) else {'closed_connectors':[]}
+        return {'status':'closed','connectors':closed.get('closed_connectors',[])}
     def task_view(self):
         goals={g['goal_id']:g for g in self.store.recent_goals(100)};out=[]
         for run in self.store.all_task_runs(100):
@@ -100,6 +158,10 @@ class Handler(BaseHTTPRequestHandler):
             if u.path=='/api/notifications':self._scope(device,'notifications');return self._json(200,{'notifications':self.core.notifications.attention('user',limit=100)})
             if u.path=='/api/voice/status':
                 self._scope(device,'conversation');return self._json(200,self.core.voice.health())
+            if u.path.startswith('/api/voice/sessions/'):
+                self._scope(device,'conversation');parts=[x for x in u.path.split('/') if x]
+                if len(parts)==4 and parts[:3]==['api','voice','sessions']:
+                    return self._json(200,self.core.voice.inspect(parts[3],owner_user_id='user'))
             if u.path=='/api/notification-channels':
                 self._scope(device,'notifications');return self._json(200,{'channels':[] if self.core.delivery is None else self.core.delivery.channel_states('user')})
             if u.path=='/api/notification-deliveries/pending':
@@ -126,12 +188,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u=urlparse(self.path)
         try:
-            body=self._body(1_000_000)
+            body=self._body(6_000_000 if u.path=='/api/multimodal' else 1_000_000)
             if u.path=='/api/enroll':
                 d,t=self.core.devices.enroll(body.get('code',''),name=body.get('name',''),kind=body.get('kind',''),os_name=body.get('os',''),capabilities=body.get('capabilities',[]));web=body.get('client')=='web';headers={'Set-Cookie':f'sparkle_device={t}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000'} if web else {};return self._json(201,{'device':d.to_dict(),**({} if web else {'token':t})},headers)
             device=self._device()
             if u.path=='/api/logout':return self._json(200,{'ok':True},{'Set-Cookie':'sparkle_device=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})
+            if u.path=='/api/voice/sessions':
+                self._scope(device,'conversation');value=self.core.voice_start(owner_user_id='user',conversation_session_id=body.get('conversation_session_id'),classification=body.get('classification','PRIVATE'),persist_transcript=body.get('persist_transcript',True));return self._json(201,value)
+            voice_parts=[x for x in u.path.split('/') if x]
+            if len(voice_parts)==5 and voice_parts[:3]==['api','voice','sessions']:
+                self._scope(device,'conversation');sid=voice_parts[3];action=voice_parts[4]
+                if action=='audio':return self._json(200,self.core.voice_push(sid,audio_base64=body.get('audio_base64',''),sequence=body.get('sequence',0),final=body.get('final',False),owner_user_id='user'))
+                if action=='interrupt':return self._json(200,self.core.voice.interrupt(sid,owner_user_id='user').to_dict())
+                if action=='close':return self._json(200,self.core.voice.close(sid,owner_user_id='user').to_dict())
             if u.path=='/api/chat':self._scope(device,'conversation');return self._json(200,self.core.conversations.send(body.get('text',''),session_id=body.get('session_id'),device_id=device['device_id']))
+            if u.path=='/api/multimodal':
+                self._scope(device,'conversation');value=self.core.multimodal_send(modality=body.get('modality',''),mime_type=body.get('mime_type'),data_base64=body.get('data_base64',''),prompt=body.get('prompt',''),session_id=body.get('session_id'),device_id=device['device_id']);return self._json(200 if value.get('status')=='COMPLETED' else 409,value)
             if u.path=='/api/background':
                 self._scope(device,'task_status');goal_id=str(body.get('goal_id',''));self.core.store.load_goal(goal_id);task=self.core.background.create(goal_id,max_iterations=int(body.get('max_iterations',100)),time_budget_seconds=float(body.get('time_budget_seconds',300)));return self._json(201,task.to_dict())
             if u.path=='/api/notification-channels/desktop':
@@ -154,7 +226,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200,self.core.delivery.retry(parts[2],owner_user_id='user'))
             if len(parts)==5 and parts[:3]==['api','operations','approvals'] and parts[4] in {'approve','reject'}:
                 self._scope(device,'approvals');self._scope(device,'task_status');return self._json(200,self.core.decide_operations_approval(parts[3],parts[4],owner_user_id='user',actor='device:'+device['device_id']))
-            if len(parts)==4 and parts[:2]==['api','approvals'] and parts[3] in {'approve','reject'}:self._scope(device,'approvals');return self._json(200,self.core.agent.decide_approval(parts[2],parts[3],actor='device:'+device['device_id']))
+            if len(parts)==4 and parts[:2]==['api','approvals'] and parts[3] in {'approve','reject'}:
+                self._scope(device,'approvals')
+                return self._json(200,self.core.decide_approval(parts[2],parts[3],owner_user_id='user',actor='device:'+device['device_id']))
             if len(parts)==4 and parts[:2]==['api','background'] and parts[3] in {'pause','resume','retry','cancel'}:
                 self._scope(device,'task_status');fn=getattr(self.core.background,parts[3]);return self._json(200,fn(parts[2]).to_dict())
             if len(parts)==4 and parts[:2]==['api','tasks'] and parts[3] in {'resume','cancel','replan'}:
@@ -187,8 +261,10 @@ def main(argv=None):
     import argparse
     p=argparse.ArgumentParser(prog='sparkle-personal-core');p.add_argument('--host',default='127.0.0.1');p.add_argument('--port',type=int,default=8765);p.add_argument('--tls-cert');p.add_argument('--tls-key');p.add_argument('--pair',action='store_true');a=p.parse_args(argv);core=PersonalCore()
     if a.pair:
-        pair=core.devices.create_enrollment_code();print('Pairing code:',pair['code']);print('Expires:',pair['expires_at']);return 0
-    server=build_server(core,a.host,a.port,tls_cert=a.tls_cert,tls_key=a.tls_key);scheme='https' if a.tls_cert else 'http';print(f'SPARKLE Personal Core: {scheme}://{a.host}:{server.server_address[1]}');server.serve_forever()
+        pair=core.devices.create_enrollment_code();print('Pairing code:',pair['code']);print('Expires:',pair['expires_at']);core.close();return 0
+    server=build_server(core,a.host,a.port,tls_cert=a.tls_cert,tls_key=a.tls_key);scheme='https' if a.tls_cert else 'http';print(f'SPARKLE Personal Core: {scheme}://{a.host}:{server.server_address[1]}')
+    try:server.serve_forever()
+    finally:server.server_close();core.close()
 
 def entrypoint():return main()
 if __name__=='__main__':raise SystemExit(main())

@@ -206,6 +206,62 @@
       }
     },
     {
+      "id": "google-gemini-3.8-live",
+      "provider": "google",
+      "model_id": "gemini-3.8-live",
+      "adapter": "gemini_voicechat",
+      "roles": [
+        "voice"
+      ],
+      "capabilities": [
+        "voice"
+      ],
+      "modalities": [
+        "text",
+        "audio"
+      ],
+      "input_modalities": [
+        "audio",
+        "text"
+      ],
+      "output_modalities": [
+        "text",
+        "audio"
+      ],
+      "enabled": true,
+      "supports_streaming": true,
+      "supports_tools": true,
+      "allow_fallback": false,
+      "latency_class": "fast",
+      "secret_refs": [
+        "GEMINI_API_KEY"
+      ],
+      "require_all_secret_refs": true,
+      "requires_verified_transport": true,
+      "transport_verified": true,
+      "transport_kind": "google_genai_live_sdk",
+      "voice_provider_alias": "gemini",
+      "connect_timeout_seconds": 30,
+      "turn_timeout_seconds": 45,
+      "provider_input_audio": {
+        "encoding": "pcm_s16le",
+        "sample_rate_hz": 16000,
+        "channels": 1,
+        "sample_width_bytes": 2
+      },
+      "provider_output_audio": {
+        "encoding": "pcm_s16le",
+        "sample_rate_hz": 24000,
+        "channels": 1,
+        "sample_width_bytes": 2
+      },
+      "acceptance": {
+        "status": "LIVE_ACCEPTED",
+        "verified_date": "2026-09-22",
+        "evidence": "real SPARKLE VoiceSessionService audio -> blocking Gemini function -> PersonalAgent calculator and approval-gated notification tool -> verified FunctionResponse -> real 24 kHz audio"
+      }
+    },
+    {
       "id": "nvidia-nemotron-voicechat",
       "provider": "nvidia",
       "model_id": "nvidia/nemotron-voicechat",
@@ -230,7 +286,7 @@
       ],
       "enabled": true,
       "supports_streaming": true,
-      "supports_tools": false,
+      "supports_tools": true,
       "allow_fallback": false,
       "latency_class": "fast",
       "secret_refs": [
@@ -239,23 +295,26 @@
       "require_all_secret_refs": true,
       "requires_verified_transport": true,
       "transport_verified": false,
-      "transport_kind": "nvcf_streaming_proxy",
+      "transport_kind": "nvidia_build_realtime_observed",
+      "websocket_url": "wss://api.ngc.nvidia.com/v2/predict/artifactname/websocket/v1/realtime?nv-function-id=42c86b5f-545a-4b2f-a83b-90fd71da9912",
+      "protocol_source": "NVIDIA-NeMo/Speech:nemotron-labs-voicechat/voicechat_realtime_instructions/api-reference.md",
       "function_id": "42c86b5f-545a-4b2f-a83b-90fd71da9912",
       "function_version": "bfaa0774-00e3-43d3-ae4e-254c4f9be49c",
       "function_name": "ai-nemotron-voicechat",
       "health_path": "/v1/realtime/health",
       "input_audio": {
         "encoding": "pcm_s16le",
-        "sample_rate_hz": 16000,
+        "sample_rate_hz": 24000,
         "channels": 1,
         "sample_width_bytes": 2
       },
       "output_audio": {
         "encoding": "pcm_s16le",
-        "sample_rate_hz": 22050,
+        "sample_rate_hz": 24000,
         "channels": 1,
         "sample_width_bytes": 2
-      }
+      },
+      "voice_provider_alias": "nvidia"
     },
     {
       "id": "nvidia-flux-2-klein-4b",
@@ -306,7 +365,7 @@
     "embedding": "nvidia-nemotron-3-embed-1b",
     "reranking": "nvidia-llama-nemotron-rerank-vl-1b-v2",
     "safety": "nvidia-nemotron-3.5-content-safety",
-    "voice": "nvidia-nemotron-voicechat",
+    "voice": "google-gemini-3.8-live",
     "image_generation": "nvidia-flux-2-klein-4b"
   }
 }

@@ -44,8 +44,9 @@ class Cycle63ConnectorManagerTests(unittest.TestCase):
 
     def test_master_spec_connectors_registered_deterministically_and_external_not_live(self):
         m=build_default_connectors(secrets=SecretResolver({}));rows=m.discover();ids=[x['connector_id'] for x in rows];self.assertEqual(ids,sorted(ids));self.assertTrue({'gmail','outlook','calendar','drive','github','files','browser','linux','iot','ros2'}<=set(ids))
-        for cid in ('gmail','outlook','calendar','drive','github','browser','linux','iot'):
+        for cid in ('gmail','outlook','calendar','drive','github','browser','iot'):
             row=m.inspect(cid);self.assertFalse(row['healthy']);self.assertFalse(row['connected']);self.assertIn(m.health(cid)['status'],{'EXTERNALLY_BLOCKED','UNAVAILABLE'});self.assertNotEqual(row['status'],'LIVE_ACCEPTED')
+        linux=m.inspect('linux');self.assertTrue(linux['healthy']);self.assertTrue(linux['connected']);self.assertEqual(m.health('linux')['status'],'HEALTHY')
         self.assertTrue(m.capabilities('gmail'));self.assertTrue(all({'capability','operation','scope','mode','policy_capability'}<=set(x) for x in m.capabilities('gmail')))
 
     def test_states_do_not_conflate_configuration_authorization_connection_health(self):

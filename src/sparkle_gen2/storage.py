@@ -48,6 +48,7 @@ class Gen2Store:
             CREATE TABLE IF NOT EXISTS daily_briefs(brief_id TEXT PRIMARY KEY,owner_user_id TEXT NOT NULL,day TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_daily_briefs_owner_day ON daily_briefs(owner_user_id,day);
             CREATE TABLE IF NOT EXISTS improvement_candidates(candidate_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS rollback_records(rollback_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS memory_candidates(candidate_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,memory_id TEXT,payload TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_memory_candidates_goal ON memory_candidates(goal_id);
             CREATE INDEX IF NOT EXISTS idx_memory_candidates_memory ON memory_candidates(memory_id);
@@ -62,6 +63,8 @@ class Gen2Store:
             CREATE TABLE IF NOT EXISTS document_records(document_id TEXT PRIMARY KEY,owner_user_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_document_records_owner ON document_records(owner_user_id);
             CREATE TABLE IF NOT EXISTS experiments(experiment_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS learning_plans(plan_id TEXT PRIMARY KEY,owner_user_id TEXT NOT NULL,payload TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_learning_plans_owner ON learning_plans(owner_user_id);
             CREATE TABLE IF NOT EXISTS device_identities(device_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS device_tokens(token_hash TEXT PRIMARY KEY,device_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS enrollment_codes(code_hash TEXT PRIMARY KEY,payload TEXT NOT NULL);
@@ -184,6 +187,33 @@ class Gen2Store:
         with self.connect() as db:rows=db.execute('SELECT payload FROM automation_bindings ORDER BY automation_id').fetchall()
         return [AutomationBinding(**json.loads(r[0])) for r in rows]
 
+    def save_rollback_record(self,record):
+        payload=record.to_dict() if hasattr(record,'to_dict') else dict(record)
+        with self.connect() as db:db.execute('INSERT INTO rollback_records(rollback_id,payload) VALUES(?,?) ON CONFLICT(rollback_id) DO UPDATE SET payload=excluded.payload',(payload['rollback_id'],self._dump(payload)))
+    def load_rollback_record(self,rollback_id):
+        from .rollback import RollbackRecord
+        with self.connect() as db:r=db.execute('SELECT payload FROM rollback_records WHERE rollback_id=?',(rollback_id,)).fetchone()
+        if r is None:raise KeyError(rollback_id)
+        return RollbackRecord(**json.loads(r[0]))
+    def rollback_records(self):
+        from .rollback import RollbackRecord
+        with self.connect() as db:rows=db.execute('SELECT payload FROM rollback_records ORDER BY rowid').fetchall()
+        return [RollbackRecord(**json.loads(r[0])) for r in rows]
+
+    def save_learning_plan(self,plan):
+        payload=plan.to_dict() if hasattr(plan,'to_dict') else dict(plan)
+        with self.connect() as db:db.execute('INSERT INTO learning_plans(plan_id,owner_user_id,payload) VALUES(?,?,?) ON CONFLICT(plan_id) DO UPDATE SET owner_user_id=excluded.owner_user_id,payload=excluded.payload',(payload['plan_id'],payload['owner_user_id'],self._dump(payload)))
+    def load_learning_plan(self,plan_id):
+        from .learning_orchestration import LearningPlanState
+        with self.connect() as db:r=db.execute('SELECT payload FROM learning_plans WHERE plan_id=?',(str(plan_id),)).fetchone()
+        if r is None:raise KeyError(plan_id)
+        return LearningPlanState(**json.loads(r[0]))
+    def learning_plans(self,*,owner_user_id,limit=20):
+        from .learning_orchestration import LearningPlanState
+        lim=max(1,min(int(limit),100))
+        with self.connect() as db:rows=db.execute('SELECT payload FROM learning_plans WHERE owner_user_id=? ORDER BY rowid DESC LIMIT ?',(owner_user_id,lim)).fetchall()
+        return [LearningPlanState(**json.loads(r[0])) for r in rows]
+
     def save_proactive_event(self,e):
         with self.connect() as db:db.execute('INSERT INTO proactive_events VALUES(?,?) ON CONFLICT(event_id) DO UPDATE SET payload=excluded.payload',(e.event_id,self._dump(e.to_dict())))
     def load_proactive_event(self,eid):
@@ -191,6 +221,10 @@ class Gen2Store:
         with self.connect() as db:r=db.execute('SELECT payload FROM proactive_events WHERE event_id=?',(eid,)).fetchone()
         if r is None:raise KeyError(eid)
         return ProactiveEvent(**json.loads(r[0]))
+    def proactive_events(self,limit=1000):
+        from .proactive import ProactiveEvent
+        with self.connect() as db:rows=db.execute('SELECT payload FROM proactive_events ORDER BY rowid DESC LIMIT ?',(max(1,min(int(limit),1000)),)).fetchall()
+        return [ProactiveEvent(**json.loads(r[0])) for r in rows]
     def clear_criteria(self,gid):
         with self.connect() as db:db.execute('DELETE FROM criteria WHERE goal_id=?',(gid,))
     def recent_goals(self,limit=10):

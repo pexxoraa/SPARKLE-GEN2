@@ -17,7 +17,7 @@ class HTTPResponse:
     def __init__(self,value):self.raw=json.dumps(value).encode()
     def __enter__(self):return self
     def __exit__(self,*a):return False
-    def read(self):return self.raw
+    def read(self,n=-1):return self.raw if n<0 else self.raw[:n]
 
 class FakeEmbed(ModelAdapter):
     provider='nvidia';model_id='nvidia/nemotron-3-embed-1b';supported_modalities=frozenset({'text'})

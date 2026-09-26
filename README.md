@@ -6,7 +6,7 @@ SPARKLE Gen-2 is a separate personal-agent application built on the certified SP
 
 `user goal → bounded Gen-1 context → model plan proposal → deterministic validation → Gen-2 policy/risk/approval → exact Gen-1 tool → independent observation/verification → goal criteria → natural response`
 
-Production planning uses `Gen1PlannerModel` through Gen-1's provider-neutral `ModelRouter`, but this release supplies a Gen-2 product registry containing exactly one active AI model: NVIDIA Nemotron 3.5 Lightning. No secondary AI model or model fallback is registered. Provider/model provenance is persisted for every model call.
+Production planning uses `Gen1PlannerModel` through Gen-1's provider-neutral `ModelRouter`. The Gen-2 product registry is capability-routed: NVIDIA Nemotron models serve planning/reasoning, multimodal, embedding, reranking and safety; FLUX serves image generation; Google Gemini 3.8 Live is the accepted production voice route; NVIDIA VoiceChat remains registered but independently gated. Every configured route keeps fallback disabled, and provider/model provenance is persisted for model calls.
 
 Model output is only a proposal. It cannot grant permission, approve actions, execute tools, change risk policy, verify its own effects, or declare a goal complete.
 
@@ -34,3 +34,8 @@ Persistent background work can be supervised separately with `sparkle-background
 SPARKLE has one Personal Core, one shared session/task state, persistent device identities, capability-scoped synchronization, human approval gates, provider-neutral model routing, independent execution verification, a responsive installable PWA, and a separate persistent background worker. Environment-specific capabilities are overlaid from private runtime configuration/evidence rather than falsely baked into source defaults.
 
 Gen-1 remains the stable execution/model/tool foundation. See `docs/ARCHITECTURE.md`, `docs/PERSONAL_CORE_UI.md`, `docs/SECURITY.md`, and `docs/ACCEPTANCE.md`.
+## Production-readiness boundary
+
+Gen-2 is prepared for private local operation but is not automatically published or deployed. The authoritative persistent Gen-2 database defaults to `~/.local/share/sparkle-gen2/gen2.sqlite3`; protected provider/device configuration remains under owner-only `~/.config/sparkle/` files and is never copied into the repository. Stop Personal Core/background-worker processes cleanly before filesystem-level backup of the database and private artifact/document roots; preserve owner-only permissions on restored configuration. Schema creation is additive/idempotent at startup and external connections are re-health-checked rather than trusted from persisted state.
+
+Operational entry points are `sparkle`/`sparkle-gen2`, `sparkle-personal-core`, and `sparkle-background-worker`. Personal Core defaults to loopback and requires configured TLS before non-loopback binding. Use the Personal Operations/diagnostics surfaces for health checks; external connectors/providers remain fail-closed when credentials, devices, or transports are absent. Upgrade/rollback must preserve the database and protected configuration separately from the source checkout; no automatic public deployment, migration destructive rewrite, or credential regeneration occurs.
