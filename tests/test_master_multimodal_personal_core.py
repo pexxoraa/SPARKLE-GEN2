@@ -94,7 +94,7 @@ class MasterMultimodalPersonalCoreTests(unittest.TestCase):
         self.assertEqual(env.model_manager,'manager');self.assertEqual(env.capability_router,'router')
 
     def test_pwa_exposes_bounded_image_and_live_voice_controls(self):
-        root=Path('src/sparkle_gen2/web');html=(root/'index.html').read_text();js=(root/'app.js').read_text()
+        root=Path('src/sparkle_gen2/web');html=(root/'index.html').read_text();js='\n'.join([p.read_text() for p in (root/'ui'/'modules').glob('*.js')])
         self.assertIn('id="image-upload"',html);self.assertIn('accept="image/png,image/jpeg,image/webp"',html);self.assertIn('id="voice-button"',html)
         self.assertIn('id="voice-button"',html);self.assertIn('Start live voice conversation',html)
         self.assertNotIn('Voice is blocked until the real VoiceChat realtime transport is verified',html)

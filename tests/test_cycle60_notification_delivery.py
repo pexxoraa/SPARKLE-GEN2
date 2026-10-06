@@ -105,6 +105,6 @@ class Cycle60Tests(unittest.TestCase):
             finally:server.shutdown();server.server_close()
 
     def test_pwa_contains_real_permission_show_and_click_ack_paths(self):
-        root=Path(__file__).parents[1]/'src/sparkle_gen2/web';app=(root/'app.js').read_text();sw=(root/'service-worker.js').read_text();html=(root/'index.html').read_text();self.assertIn('Notification.requestPermission()',app);self.assertIn('showNotification',app);self.assertIn('/api/notification-channels/desktop',app);self.assertIn('notificationclick',sw);self.assertIn('/acknowledge',sw);self.assertIn('enable-desktop-notifications',html)
+        root=Path(__file__).parents[1]/'src/sparkle_gen2/web';app='\n'.join([p.read_text() for p in (root/'ui'/'modules').glob('*.js')]);sw=(root/'service-worker.js').read_text();html=(root/'index.html').read_text();self.assertIn('Notification.requestPermission()',app);self.assertIn('showNotification',app);self.assertIn('/api/notification-channels/desktop',app);self.assertIn('notificationclick',sw);self.assertIn('/acknowledge',sw);self.assertIn('enable-desktop-notifications',html)
 
 if __name__=='__main__':unittest.main()

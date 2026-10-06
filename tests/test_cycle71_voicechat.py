@@ -67,7 +67,7 @@ class Cycle71VoiceChatTests(unittest.TestCase):
             svc=VoiceSessionService(Gen2Store(Path(d)/'g.db'),model_manager=m);h=svc.health();self.assertEqual(h['status'],'UNAVAILABLE');self.assertFalse(h['live_verified'])
 
     def test_cycle71_files_do_not_embed_secret_values_or_add_transport_guess(self):
-        paths=[Path('src/sparkle_gen2/protected_secrets.py'),Path('src/sparkle_gen2/model_manager.py')]
+        paths=[Path('src/sparkle_gen2/infrastructure/security/protected_secrets.py'),Path('src/sparkle_gen2/infrastructure/providers/model_manager.py')]
         blob='\n'.join(p.read_text() for p in paths)
         self.assertNotIn('wss'+ '://',blob);self.assertNotIn('Authorization'+': Bearer',blob);self.assertNotIn('shell'+'=True',blob);self.assertNotIn('subprocess'+'.',blob)
         self.assertIn(VOICECHAT_SECRET_REF,blob)

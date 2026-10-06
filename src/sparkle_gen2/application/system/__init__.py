@@ -1,3 +1,1 @@
-"""System-level application use cases."""
-from ..automation_orchestration import AutomationOrchestrator
-__all__=["AutomationOrchestrator"]
+"""System application services. Keep package import side-effect free."""

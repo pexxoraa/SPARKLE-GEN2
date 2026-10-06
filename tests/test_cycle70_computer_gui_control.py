@@ -120,7 +120,7 @@ class Cycle70ComputerTests(unittest.TestCase):
             db=Path(d)/'g.db';store=Gen2Store(db);m,a=self.manager(store);sid=self.start_session(m,a);rows=m.invocations(owner_user_id='alice',connector_id='computer');raw=db.read_bytes();self.assertNotIn(b'screencast-pipewire',raw);self.assertNotIn(b'computer-session:',raw);self.assertTrue(rows[0]['arguments_digest']);self.assertEqual(rows[0]['verification_status'],'VERIFIED')
 
     def test_static_security_no_shell_raw_input_or_forbidden_gui_framework(self):
-        text='\n'.join(Path(x).read_text() for x in ('src/sparkle_gen2/computer_adapter.py','src/sparkle_gen2/computer_portal_helper.py')).lower();self.assertNotIn('shell=true',text);self.assertNotIn('/dev/input',text);self.assertNotIn('xdotool',text);self.assertNotIn('ydotool',text);self.assertNotIn('wmctrl',text);self.assertNotIn('selenium',text);self.assertNotIn('playwright',text);self.assertNotIn('xtest',text);self.assertNotIn('/bin/bash',text);self.assertNotIn('/bin/sh',text);self.assertIn("system_python='/usr/bin/python3'",text)
+        text='\n'.join(Path(x).read_text() for x in ('src/sparkle_gen2/infrastructure/devices/computer_adapter.py','src/sparkle_gen2/infrastructure/devices/computer_portal_helper.py')).lower();self.assertNotIn('shell=true',text);self.assertNotIn('/dev/input',text);self.assertNotIn('xdotool',text);self.assertNotIn('ydotool',text);self.assertNotIn('wmctrl',text);self.assertNotIn('selenium',text);self.assertNotIn('playwright',text);self.assertNotIn('xtest',text);self.assertNotIn('/bin/bash',text);self.assertNotIn('/bin/sh',text);self.assertIn("system_python='/usr/bin/python3'",text)
 
     def test_personalagent_observe_and_control_approval(self):
         with tempfile.TemporaryDirectory() as d:

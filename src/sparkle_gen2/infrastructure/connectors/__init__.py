@@ -1,3 +1,3 @@
-"""External service connector boundary."""
-from ...connector_catalog import build_default_connectors
-__all__=["build_default_connectors"]
+"""Connector infrastructure boundary."""
+from .manager import *
+from .catalog import build_default_connectors
