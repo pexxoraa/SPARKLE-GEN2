@@ -32,6 +32,18 @@ class Handler(BaseHTTPRequestHandler):
         return JsonResponder.send(self,status,value,headers)
     def _body(self,max_bytes=1_000_000):
         return JsonRequest.read(self,max_bytes)
+    def _owned_goal(self,goal_id):
+        goal=self.core.store.load_goal(goal_id)
+        if getattr(goal,'user_id','user')!='user':raise PermissionError('goal_owner_mismatch')
+        return goal
+    def _pending_approvals(self):
+        rows=[]
+        for approval in self.core.store.all_approvals():
+            if approval.status.value!='PENDING':continue
+            try:self._owned_goal(approval.goal_id)
+            except (PermissionError,KeyError):continue
+            rows.append(approval.to_dict())
+        return rows
     def _device_token(self):
         return DeviceAuthentication.token(self)
     def _device(self):return self.core.devices.authenticate(self._device_token())
@@ -67,7 +79,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200,getattr(self.core.inspector,method)())
             if u.path=='/api/system':
                 self._scope(device,'task_status');return self._json(200,self.core.operations_snapshot(device.get('capabilities',[])))
-            if u.path=='/api/approvals':self._scope(device,'approvals');return self._json(200,{'approvals':[a.to_dict() for a in self.core.store.all_approvals() if a.status.value=='PENDING']})
+            if u.path=='/api/approvals':self._scope(device,'approvals');return self._json(200,{'approvals':self._pending_approvals()})
             if u.path=='/api/notifications':self._scope(device,'notifications');return self._json(200,{'notifications':self.core.notifications.attention('user',limit=100)})
             if u.path=='/api/voice/status':
                 self._scope(device,'conversation');return self._json(200,self.core.voice.health())
@@ -96,7 +108,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path.startswith('/api/sessions/') and u.path.endswith('/messages'):
                 self._scope(device,'conversation');sid=u.path.split('/')[3];return self._json(200,{'session_id':sid,'messages':self.core.conversations.messages(sid,200)})
             if u.path=='/api/events':
-                self._scope(device,'task_status');q=parse_qs(u.query);limit=min(200,max(1,int(q.get('limit',['100'])[0])));after=max(0,int(q.get('after',['0'])[0]));events=[e for e in reversed(self.core.store.recent_events(limit)) if int(e['event_id'])>after];return self._json(200,{'events':events,'device_id':device['device_id'],'cursor':max([after]+[int(e['event_id']) for e in events])})
+                self._scope(device,'task_status');q=parse_qs(u.query);limit=min(200,max(1,int(q.get('limit',['100'])[0])));after=max(0,int(q.get('after',['0'])[0]));owned={g['goal_id'] for g in self.core.store.recent_goals(1000) if g.get('user_id','user')=='user'};events=[e for e in reversed(self.core.store.recent_events(limit)) if int(e['event_id'])>after and e.get('goal_id') in owned];return self._json(200,{'events':events,'device_id':device['device_id'],'cursor':max([after]+[int(e['event_id']) for e in events])})
             return self._json(404,{'error':'not_found'})
         except PermissionError as exc:return self._json(401,{'error':str(exc)})
         except (KeyError,ValueError) as exc:return self._json(400,{'error':str(exc)})
@@ -136,19 +148,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._scope(device,'task_status');return self._json(200,self.core.plan_os_item(str(body.get('record_type','')),str(body.get('record_id','')),owner_user_id='user'))
             if u.path.startswith('/api/os/goals/'):
                 parts=[x for x in u.path.split('/') if x];self._scope(device,'conversation')
-                if len(parts)==4 and parts[3]=='delete':return self._json(200,self.core.delete_goal(parts[2],owner_user_id='user'))
-                if len(parts)==3:return self._json(200,self.core.update_manual_goal(parts[2],body,owner_user_id='user'))
+                if len(parts)==5 and parts[4]=='delete':return self._json(200,self.core.delete_goal(parts[3],owner_user_id='user'))
+                if len(parts)==4:return self._json(200,self.core.update_manual_goal(parts[3],body,owner_user_id='user'))
                 return self._json(404,{'error':'not_found'})
             if u.path.startswith('/api/os/tasks/'):
                 parts=[x for x in u.path.split('/') if x];self._scope(device,'task_status')
-                if len(parts)==4 and parts[3]=='delete':return self._json(200,self.core.delete_task(parts[2],owner_user_id='user'))
-                if len(parts)==3:return self._json(200,self.core.update_manual_task(parts[2],body,owner_user_id='user'))
+                if len(parts)==5 and parts[4]=='delete':return self._json(200,self.core.delete_task(parts[3],owner_user_id='user'))
+                if len(parts)==4:return self._json(200,self.core.update_manual_task(parts[3],body,owner_user_id='user'))
                 return self._json(404,{'error':'not_found'})
             if u.path.startswith('/api/os/records/'):
                 parts=[x for x in u.path.split('/') if x]
                 self._scope(device,'conversation')
-                if len(parts)==4 and parts[3]=='delete':return self._json(200,self.core.delete_manual_record(parts[2],owner_user_id='user'))
-                if len(parts)==3:return self._json(200,self.core.update_manual_record(parts[2],body,owner_user_id='user'))
+                if len(parts)==5 and parts[4]=='delete':return self._json(200,self.core.delete_manual_record(parts[3],owner_user_id='user'))
+                if len(parts)==4:return self._json(200,self.core.update_manual_record(parts[3],body,owner_user_id='user'))
                 return self._json(404,{'error':'not_found'})
             if u.path=='/api/conversation/models':
                 self._scope(device,'conversation');return self._json(200,self.core.conversations.model_inventory())
@@ -175,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path=='/api/multimodal':
                 self._scope(device,'conversation');value=self.core.multimodal_send(modality=body.get('modality',''),mime_type=body.get('mime_type'),data_base64=body.get('data_base64',''),prompt=body.get('prompt',''),session_id=body.get('session_id'),device_id=device['device_id']);return self._json(200 if value.get('status')=='COMPLETED' else 409,value)
             if u.path=='/api/background':
-                self._scope(device,'task_status');goal_id=str(body.get('goal_id',''));self.core.store.load_goal(goal_id);task=self.core.background.create(goal_id,max_iterations=int(body.get('max_iterations',100)),time_budget_seconds=float(body.get('time_budget_seconds',300)));return self._json(201,task.to_dict())
+                self._scope(device,'task_status');goal_id=str(body.get('goal_id',''));self._owned_goal(goal_id);task=self.core.background.create(goal_id,max_iterations=int(body.get('max_iterations',100)),time_budget_seconds=float(body.get('time_budget_seconds',300)));return self._json(201,task.to_dict())
             if u.path=='/api/notification-channels/desktop':
                 self._scope(device,'notifications')
                 if self.core.delivery is None:raise RuntimeError('notification_delivery_unavailable')
@@ -200,7 +212,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._scope(device,'approvals')
                 return self._json(200,self.core.decide_approval(parts[2],parts[3],owner_user_id='user',actor='device:'+device['device_id']))
             if len(parts)==4 and parts[:2]==['api','background'] and parts[3] in {'pause','resume','retry','cancel'}:
-                self._scope(device,'task_status');fn=getattr(self.core.background,parts[3]);return self._json(200,fn(parts[2]).to_dict())
+                self._scope(device,'task_status');self._owned_goal(self.core.store.load_background_task(parts[2]).goal_id);fn=getattr(self.core.background,parts[3]);return self._json(200,fn(parts[2]).to_dict())
             if len(parts)==4 and parts[:2]==['api','memory'] and parts[3] in {'approve','reject','reconcile'}:
                 self._scope(device,'conversation');self._scope(device,'approvals')
                 return self._json(200,self.core.inspector.memory_decision(parts[2],parts[3],actor='device:'+device['device_id']))

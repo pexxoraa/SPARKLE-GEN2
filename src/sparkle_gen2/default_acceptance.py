@@ -90,6 +90,7 @@ def build_acceptance_matrix(runtime_evidence_path=None):
     }
     for capability,(dependency,evidence) in blocked.items():m.set(CapabilityState(capability,'EXTERNALLY_BLOCKED',evidence,dependency))
     m.set(CapabilityState('production_deployment','DEFERRED','No deployment target/runtime was specified; repository and local runtime remain testable',limitation='deployment target selection is a human/environment decision'))
+    for state in m.items.values():state.evidence_source='recorded_acceptance; not a current runtime probe'
     if runtime_evidence_path is not None:
         from .activation_evidence import load_activation_evidence
         for capability,record in load_activation_evidence(runtime_evidence_path).items():
@@ -98,5 +99,5 @@ def build_acceptance_matrix(runtime_evidence_path=None):
             for key in ('provider','environment','test_id','timestamp','failure_reason'):
                 if record.get(key):details.append(f"{key}={record[key]}")
             dependency=None if record['status']=='LIVE_VERIFIED' else m.items[capability].dependency
-            m.set(CapabilityState(capability,record['status'],'; '.join(details),dependency,m.items[capability].limitation))
+            m.set(CapabilityState(capability,record['status'],'; '.join(details),dependency,m.items[capability].limitation,'configured runtime evidence; inspect its timestamp'))
     return m

@@ -27,6 +27,7 @@ src/sparkle_gen2/
 ├── domain/
 │   ├── models.py
 │   ├── contracts/ports.py
+│   ├── contracts/tool_protocol.py
 │   ├── entities/
 │   ├── value_objects/
 │   ├── policies/
@@ -41,8 +42,16 @@ src/sparkle_gen2/
 │   ├── validation.py
 │   ├── execution/
 │   │   ├── approval_service.py
-│   │   └── lifecycle_service.py
-│   ├── personal_os/service.py
+│   │   ├── lifecycle_service.py
+│   │   ├── run_controls.py
+│   │   ├── tool_dispatch.py
+│   │   ├── verification.py
+│   │   └── budgets.py
+│   ├── personal_os/
+│   │   ├── service.py
+│   │   ├── workflows.py
+│   │   ├── graph.py
+│   │   └── inspector.py
 │   ├── planning/
 │   ├── knowledge/
 │   ├── notifications/
@@ -77,6 +86,7 @@ src/sparkle_gen2/
             ├── conversation.js
             ├── voice.js
             ├── os-editor.js
+            ├── workspace.js
             ├── interactions.js
             └── bootstrap.js
 ```
@@ -123,3 +133,18 @@ Do not delete compatibility files until every external caller is migrated and re
 4. Keep HTTP/CLI/browser translation in `interfaces/` or `web/`.
 5. Keep `runtime.py` as the only composition root.
 6. Add a compatibility facade instead of breaking an existing public import during migration.
+
+
+## Execution and Personal OS spine
+
+ExecutionLifecycleService persists understanding, planning, authorization, action, observation, verification, recovery and completion. ToolDispatcher owns tool-specific application routing. The lifecycle consumes correlated ToolInput/ToolOutput records and StepVerifier results rather than accepting tool success as goal completion. AgentResult provides structured outcomes. Capability definitions derive from actual schemas, policy and runtime health.
+
+RunControlService persists pause/cancel requests and serializes each goal with an SQLite process lease. Cumulative action/runtime/planning budgets survive restart and replanning, including failed replans. Dead unreaped process leases are reclaimable. Interrupted state-changing actions and returned-after-timeout actions stop for inspection. Unknown token usage is explicit; a token ceiling cannot authorize an unbounded model reservation.
+
+PersonalGraphService projects owner-scoped Goal → Task → Plan/Run → Step → Result relationships with Project, Learning, Skill, Research, Experiment, Evidence, Document, Memory, Agent and Tool links. Source records retain their original direction/completion state when a bounded child completes. Updating or clearing relationships replaces obsolete source edges transactionally. PersonalOSWorkflowService starts actual policy-controlled execution from saved records. PersonalOSInspector serves bounded redacted views and owner-checked controls.
+
+The web loader loads definitions before initialization/event binding. All nested JavaScript, CSS and font resources are wheel package data. The service worker caches the versioned static shell, excludes private API state and uses HTML fallback only for navigation.
+
+The Core remains a private workspace with scoped devices. Gen-2 owner checks do not imply that every inherited native service provides an independent multi-account database. Native agents, tools, builders, stores, providers and safety boundaries are reused without changing Gen-1 source.
+
+See [execution engine](docs/EXECUTION_ENGINE.md), [Personal graph](docs/PERSONAL_GRAPH.md), and [dated completion audit](docs/COMPLETION_AUDIT_2026-10-06.md) for actual evidence and limitations.

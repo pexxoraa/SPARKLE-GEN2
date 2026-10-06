@@ -37,7 +37,7 @@ class PersonalOSWorkflowService:
         elif kind=='learning':execution.metadata['learning_plan_id']=record_id
         self.store.save_goal(execution)
         if kind in {'project','research','skill'}:
-            row=self.core.update_manual_record(record_id,{'goal_id':execution.goal_id,'status':result.get('status','PLANNED')},owner_user_id=owner_user_id)
+            row=self.core.update_manual_record(record_id,{'metadata':{'execution_goal_id':execution.goal_id,'last_execution_status':result.get('status','PLANNED')}},owner_user_id=owner_user_id)
             self.graph.record(row)
         plan=self.store.load_plan(execution.plan_id) if execution.plan_id else None
         try:run=self.store.load_task_run_for_goal(execution.goal_id)

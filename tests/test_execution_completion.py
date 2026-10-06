@@ -33,6 +33,71 @@ class Gateway:
 
 
 class CompletionTests(unittest.TestCase):
+    def test_repeated_failed_replans_keep_consumed_budget_after_restart(self):
+        from sparkle_gen2.planner import PlannerError
+        class Offline:
+            def propose(self,*args):raise PlannerError('unavailable')
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'core.db';gateway=Gateway()
+            result=PersonalAgent(Gen2Store(path),gateway,planner=Offline(),planner_retries=0).start('Calculate')
+            for expected in (2,3,4):
+                agent=PersonalAgent(Gen2Store(path),gateway,planner=Offline(),planner_retries=0)
+                agent.resume(result['goal_id'])
+                self.assertEqual(agent.store.load_task_run_for_goal(result['goal_id']).resource_usage['planning_calls'],expected)
+            self.assertEqual(gateway.calls,[])
+
+    @unittest.skipUnless(Path('/proc/self/stat').exists(),'Linux process identity unavailable')
+    def test_dead_unreaped_process_lease_is_reclaimed(self):
+        import subprocess,sys
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'core.db';store=Gen2Store(path)
+            code='from sparkle_gen2.storage import Gen2Store;import sys;s=Gen2Store(sys.argv[1]);assert s.claim_execution("goal","old");print("claimed",flush=True)'
+            process=subprocess.Popen([sys.executable,'-c',code,str(path)],stdout=subprocess.PIPE,text=True)
+            try:
+                self.assertEqual(process.stdout.read().strip(),'claimed')
+                self.assertTrue(store.claim_execution('goal','replacement'))
+            finally:
+                process.stdout.close();process.wait(timeout=10)
+            store.release_execution('goal','replacement')
+
+
+    def test_planning_failures_keep_categories_without_private_diagnostics(self):
+        from sparkle_gen2.planner import PlannerError
+        class PrivatePlanner:
+            def propose(self,*a):
+                error=PlannerError('private diagnostic: token=example-sensitive-value')
+                error.category='connectivity_failure';error.retryable=True
+                raise error
+        with tempfile.TemporaryDirectory() as d:
+            store=Gen2Store(Path(d)/'core.db');gateway=Gateway()
+            result=PersonalAgent(store,gateway,planner=PrivatePlanner(),planner_retries=0).start('Calculate')
+            self.assertEqual(result['planning_error']['error_category'],'connectivity_failure')
+            self.assertEqual(gateway.calls,[])
+            self.assertNotIn('example-sensitive-value',str(result)+str(store.events(result['goal_id'])))
+
+    def test_restart_recovers_saved_goal_after_planning_failure(self):
+        from sparkle_gen2.planner import PlannerError
+        class OfflinePlanner:
+            def propose(self,*a):raise PlannerError('planner_unavailable')
+        with tempfile.TemporaryDirectory() as d:
+            db=Path(d)/'core.db';gateway=Gateway()
+            failed=PersonalAgent(Gen2Store(db),gateway,planner=OfflinePlanner(),planner_retries=0).start('Calculate')
+            self.assertEqual(failed['status'],'WAITING');self.assertEqual(gateway.calls,[])
+            restarted=PersonalAgent(Gen2Store(db),gateway,planner=StaticPlanner(proposal()))
+            recovered=restarted.resume(failed['goal_id'])
+            self.assertEqual(recovered['status'],'COMPLETED');self.assertEqual(recovered['goal_id'],failed['goal_id'])
+            self.assertEqual(len(restarted.store.recent_goals()),1)
+
+    def test_context_failure_is_saved_and_retryable_without_tool_execution(self):
+        class UnavailableContext(Gateway):
+            def retrieve_context(self,*a):raise ConnectionError('private provider diagnostic')
+        with tempfile.TemporaryDirectory() as d:
+            store=Gen2Store(Path(d)/'core.db');gateway=UnavailableContext()
+            result=PersonalAgent(store,gateway,planner=StaticPlanner(proposal())).start('Calculate')
+            self.assertEqual(result['status'],'WAITING');self.assertEqual(gateway.calls,[])
+            self.assertNotIn('private provider diagnostic',str(result))
+            self.assertEqual(store.load_task_run_for_goal(result['goal_id']).status,'CONTEXT_UNAVAILABLE')
+
     def test_natural_intention_executes_real_gen1_and_persists_graph(self):
         with tempfile.TemporaryDirectory() as d:
             db=Path(d)/'g.db';store=Gen2Store(db)
@@ -41,7 +106,12 @@ class CompletionTests(unittest.TestCase):
             result=service.send('I want to calculate 2+2.')
             self.assertEqual(result['result']['status'],'COMPLETED')
             graph=Gen2Store(db).graph_snapshot('user')
-            self.assertEqual({n['type'] for n in graph['nodes']},{'person','agent','tool','goal','task','plan','execution','step','result'})
+            self.assertEqual({n['type'] for n in graph['nodes']},{'person','agent','tool','goal','task','plan','execution','step','result','event'})
+            event_nodes = [n for n in graph['nodes'] if n['type'] == 'event']
+            self.assertTrue(event_nodes)
+            self.assertTrue(all('payload' not in n and 'occurred_at' in n for n in event_nodes))
+            self.assertEqual(store.events(result['result']['goal_id']), Gen2Store(db).events(result['result']['goal_id']))
+            self.assertTrue(any(e['type']=='describes' for e in graph['edges']))
             self.assertTrue(any(e['type']=='produces' for e in graph['edges']))
             self.assertTrue(all(e['from']!=e['to'] for e in graph['edges']))
             self.assertEqual(Gen2Store(db).graph_snapshot('other')['nodes'],[])

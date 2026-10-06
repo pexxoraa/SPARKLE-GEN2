@@ -18,6 +18,7 @@ from sparkle_gen2.application.world.dashboard import PersonalOperationsService
 from sparkle_gen2.application.system.diagnostics import SelfDiagnostics
 from sparkle_gen2.learning_orchestration import LearningOrchestrator
 from sparkle_gen2.experiments import ExperimentManager
+from sparkle_gen2.application.personal_os import PersonalOSService
 
 
 def plan():
@@ -42,7 +43,10 @@ class PersonalOSCompletionTests(unittest.TestCase):
     def request(self,path,*,data=None,token=None):
         headers={'Content-Type':'application/json','Authorization':'Bearer '+(token or self.token)}
         request=urllib.request.Request(self.base+path,headers=headers,data=json.dumps(data).encode() if data is not None else None)
-        with urllib.request.urlopen(request,timeout=10) as response:return json.loads(response.read())
+        try:
+            with urllib.request.urlopen(request,timeout=10) as response:return json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            error.close();raise
 
     def enroll(self,capabilities):
         code=self.core.devices.create_enrollment_code()['code']
@@ -56,7 +60,7 @@ class PersonalOSCompletionTests(unittest.TestCase):
 
     def test_new_pages_read_persisted_records_and_enforce_scopes(self):
         result=self.agent.start('Calculate 2+2')
-        for path in ('/api/executions','/api/knowledge','/api/memory','/api/automations','/api/activity','/api/graph','/api/system'):
+        for path in ('/api/state','/api/tasks','/api/approvals','/api/executions','/api/knowledge','/api/memory','/api/automations','/api/activity','/api/graph','/api/system'):
             with self.subTest(path=path):self.assertIsInstance(self.request(path),dict)
         detail=self.request('/api/executions/'+result['goal_id'])
         self.assertEqual(detail['run']['status'],'COMPLETED')
@@ -70,6 +74,9 @@ class PersonalOSCompletionTests(unittest.TestCase):
         self.assertEqual(self.request('/api/executions')['executions'],[])
         self.denied('/api/executions/'+foreign['goal_id'])
         self.denied('/api/tasks/'+foreign['goal_id']+'/cancel',data={})
+        self.denied('/api/background',data={'goal_id':foreign['goal_id']})
+        self.assertNotIn(foreign['goal_id'],json.dumps(self.request('/api/state')))
+        self.assertEqual(self.request('/api/events')['events'],[])
         self.assertNotIn(foreign['goal_id'],json.dumps(self.request('/api/graph')))
 
     def test_goal_project_task_execution_result_are_connected_after_restart(self):
@@ -107,6 +114,30 @@ class PersonalOSCompletionTests(unittest.TestCase):
         self.assertEqual(self.core.task_view(),[])
         self.assertEqual(self.core.task_view(owner_user_id='other')[0]['goal_id'],task['goal_id'])
 
+    def test_manual_os_update_and_delete_routes_persist_actual_changes(self):
+        created=[('goals',self.request('/api/os/goals',data={'title':'Original'})['goal']['goal_id']),
+                 ('tasks',self.request('/api/os/tasks',data={'title':'Original'})['goal_id']),
+                 ('records',self.request('/api/os/records',data={'record_type':'project','title':'Original'})['record_id'])]
+        for collection,identity in created:
+            with self.subTest(collection=collection):
+                changed=self.request('/api/os/'+collection+'/'+identity,data={'title':'Updated','priority':8})
+                self.assertEqual(changed.get('title') or changed.get('normalized_objective'),'Updated')
+                persisted=self.store.load_os_record(identity) if collection=='records' else self.store.load_goal(identity).to_dict()
+                self.assertEqual(persisted.get('title') or persisted.get('normalized_objective'),'Updated')
+                self.assertEqual(self.request('/api/os/'+collection+'/'+identity+'/delete',data={})['status'],'DELETED')
+                with self.assertRaises(KeyError):self.store.load_os_record(identity) if collection=='records' else self.store.load_goal(identity)
+
+    def test_memory_review_requires_owner_and_approval_scope(self):
+        owned=self.agent.start('I prefer weekly summaries.')
+        candidate=self.agent.memory.get(self.store.memory_candidates(goal_id=owned['goal_id'])[0]['candidate_id'])
+        self.assertEqual(self.request('/api/memory')['candidates'][0]['state'],'PROPOSED')
+        limited=self.enroll(['conversation']);self.denied('/api/memory/'+candidate.candidate_id+'/reject',data={},token=limited)
+        rejected=self.request('/api/memory/'+candidate.candidate_id+'/reject',data={})
+        self.assertEqual(rejected['state'],'REJECTED')
+        other=self.agent.start('I prefer monthly summaries.',user_id='other')
+        foreign=self.agent.memory.get(self.store.memory_candidates(goal_id=other['goal_id'])[0]['candidate_id'])
+        self.denied('/api/memory/'+foreign.candidate_id+'/approve',data={})
+
     def test_learning_skill_evidence_is_persistent_and_connected(self):
         self.agent.learning=LearningOrchestrator(self.store,None)
         plan=self.core.create_manual_learning('Robotics','Understand controls',['Feedback'])['plan']
@@ -134,3 +165,42 @@ class PersonalOSCompletionTests(unittest.TestCase):
         self.assertEqual(goal.user_request,'Calculate 2+2')
         self.assertEqual(goal.metadata['agent_profile']['agent_id'],'research')
         self.assertEqual(self.store.load_plan(goal.plan_id).steps[0].preferred_agent,'research')
+
+    def test_bounded_project_execution_preserves_direction_and_completion_state(self):
+        goal=self.core.create_manual_goal('Build the entire robotics system')['goal']
+        project=self.core.save_manual_record('project','Robotics',metadata={'goal_id':goal['goal_id']})
+        result=self.core.plan_os_item('project',project['record_id'])
+        self.assertEqual(result['status'],'COMPLETED')
+        persisted=self.store.load_os_record(project['record_id'])
+        self.assertEqual(persisted['status'],'ACTIVE')
+        self.assertEqual(persisted['metadata']['goal_id'],goal['goal_id'])
+        self.assertEqual(persisted['metadata']['execution_goal_id'],result['goal_id'])
+        edges=Gen2Store(self.store.path).graph_snapshot('user')['edges']
+        self.assertTrue(any(e['from']==project['record_id'] and e['to']==goal['goal_id'] and e['type']=='supports' for e in edges))
+        self.assertTrue(any(e['from']==project['record_id'] and e['to']==result['goal_id'] and e['type']=='executed_by' for e in edges))
+
+    def test_graph_changes_and_clears_links_without_stale_or_foreign_edges(self):
+        first=self.core.create_manual_goal('First')['goal']['goal_id']
+        second=self.core.create_manual_goal('Second')['goal']['goal_id']
+        foreign=self.core.create_manual_goal('Private',owner_user_id='other')['goal']['goal_id']
+        project=self.core.save_manual_record('project','Linked',metadata={'goal_id':first})
+        for target in (second,'',foreign):
+            self.core.update_manual_record(project['record_id'],{'goal_id':target})
+            edges=Gen2Store(self.store.path).graph_snapshot('user')['edges']
+            linked=[e['to'] for e in edges if e['from']==project['record_id'] and e['type']=='supports']
+            self.assertEqual(linked,[second] if target==second else [])
+
+    def test_application_facade_translates_payloads_and_enforces_owner_and_kind(self):
+        service=PersonalOSService(self.core)
+        goal=service.create_goal({'title':'Facade goal'},owner_user_id='other')['goal']
+        project=service.save_record('project',{'title':'Facade project','metadata':{'goal_id':goal['goal_id']}},owner_user_id='other')
+        task=service.create_task({'title':'Facade task','priority':8,'metadata':{'project_id':project['record_id']}},owner_user_id='other')
+        self.assertEqual(self.store.load_goal(task['goal_id']).priority,8)
+        self.assertEqual(service.snapshot()['projects'],[])
+        self.assertEqual(service.snapshot(owner_user_id='other')['projects'][0]['record_id'],project['record_id'])
+        with self.assertRaises(PermissionError):service.update_record('project',project['record_id'],{'title':'Denied'})
+        with self.assertRaises(ValueError):service.delete_record('skill',project['record_id'],owner_user_id='other')
+        changed=service.update_record('project',project['record_id'],{'title':'Changed'},owner_user_id='other')
+        self.assertEqual(changed['title'],'Changed')
+        service.delete_record('project',project['record_id'],owner_user_id='other')
+        with self.assertRaises(KeyError):self.store.load_os_record(project['record_id'])

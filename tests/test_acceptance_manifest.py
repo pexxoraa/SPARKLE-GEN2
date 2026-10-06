@@ -2,6 +2,9 @@ import unittest
 from sparkle_gen2.default_acceptance import build_acceptance_matrix
 from sparkle_gen2.required_capabilities import MASTER_REQUIRED_CAPABILITIES
 class AcceptanceManifestTests(unittest.TestCase):
+    def test_packaged_evidence_is_not_presented_as_a_fresh_probe(self):
+        for row in build_acceptance_matrix().summary():self.assertIn('not a current runtime probe',row['evidence_source'])
+
     def test_all_declared_capabilities_have_terminal_classification(self):
         m=build_acceptance_matrix();self.assertEqual(m.unresolved(),[])
         states={x['capability']:x for x in m.summary()};self.assertEqual(set(states),MASTER_REQUIRED_CAPABILITIES)

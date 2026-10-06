@@ -15,7 +15,8 @@ class Gen2Store:
         except PermissionError:
             return 'alive'
         try:
-            return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
+            fields=Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+            return None if fields[0] in {'Z','X'} else fields[19]
         except (OSError, IndexError):
             return 'alive'
 
@@ -40,8 +41,13 @@ class Gen2Store:
 
     def __init__(self,path:str|Path):
         self.path=Path(path); self.path.parent.mkdir(parents=True,exist_ok=True); self._init()
-    def save_graph(self, nodes, edges):
+    def save_graph(self, nodes, edges, *, replace_relationships=()):
         with self.connect() as db:
+            for source, owner, relations in replace_relationships:
+                for old in db.execute('SELECT edge_id,payload FROM personal_graph_edges WHERE owner_user_id=?', (owner,)).fetchall():
+                    value=json.loads(old['payload'])
+                    if value['from']==source and value['type'] in relations:
+                        db.execute('DELETE FROM personal_graph_edges WHERE edge_id=? AND owner_user_id=?', (old['edge_id'],owner))
             for row in nodes:
                 db.execute('INSERT OR REPLACE INTO personal_graph_nodes VALUES(?,?,?)', (row['id'], row['owner_user_id'], self._dump(row)))
             for row in edges:
@@ -210,8 +216,8 @@ class Gen2Store:
     def event(self,gid,event_type,payload,created_at):
         with self.connect() as db:db.execute('INSERT INTO events(goal_id,event_type,payload,created_at) VALUES(?,?,?,?)',(gid,event_type,self._dump(payload),created_at))
     def events(self,gid):
-        with self.connect() as db:rows=db.execute('SELECT event_type,payload,created_at FROM events WHERE goal_id=? ORDER BY id',(gid,)).fetchall()
-        return [{'event_type':r[0],'payload':json.loads(r[1]),'created_at':r[2]} for r in rows]
+        with self.connect() as db:rows=db.execute('SELECT id,event_type,payload,created_at FROM events WHERE goal_id=? ORDER BY id',(gid,)).fetchall()
+        return [{'event_id':r[0],'event_type':r[1],'payload':json.loads(r[2]),'created_at':r[3]} for r in rows]
     def save_session(self,s):
         with self.connect() as db:db.execute('INSERT INTO sessions VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET payload=excluded.payload',(s.session_id,self._dump(s.to_dict())))
     def load_session(self,sid):

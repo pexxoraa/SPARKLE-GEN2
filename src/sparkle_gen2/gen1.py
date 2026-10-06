@@ -193,6 +193,8 @@ class LocalGen1Gateway:
             'The executable tool selection is derived deterministically by '
             'Gen-2 from required_capabilities after planning. '
 
+            'Each step must contain ONLY step_id, objective, required_capabilities, depends_on, success_criteria, arguments, timeout_seconds, retry_limit, and optional verification. Do not add agent, model, order, risk, status, description, tool, or metadata fields to a step. '
+
             'Every step.arguments MUST be a JSON object conforming to the '
             'selected tool parameters schema. '
             'Every schema-required argument MUST be present and non-empty. '
@@ -251,6 +253,7 @@ class LocalGen1Gateway:
             f'CAPABILITY_REGISTRY={json.dumps(context.get("capability_registry",[]),ensure_ascii=False,separators=(",",":"))}\\n'
             f'AVAILABLE_TOOL_DEFINITIONS={json.dumps(tool_definitions,ensure_ascii=False,separators=(",",":"))}\\n'
             f'RELEVANT_CONTEXT={json.dumps(str(context.get("rendered",""))[:6000],ensure_ascii=False)}\\n'
+            f'PREVIOUS_PLANNING_VALIDATION={json.dumps(context.get("planning_feedback",{}),ensure_ascii=False)}\\n'
             f'AGENT_PROFILE={json.dumps(goal.get("metadata",{}).get("agent_profile",{}),ensure_ascii=False)}\\n'
             f'OUTPUT_SHAPE={json.dumps(schema,ensure_ascii=False,separators=(",",":"))}'
         )
@@ -264,6 +267,7 @@ class LocalGen1Gateway:
             metadata={
                 'operation':'gen2_plan',
                 'required_capabilities':['planning','reasoning'],
+                'model_constraints':goal.get('metadata',{}).get('model_constraints'),
             },
         )
 
@@ -344,8 +348,10 @@ class LocalGen1Gateway:
         }
 
         usage=getattr(response,'usage',{})
-        if hasattr(usage,'to_dict'):usage=usage.to_dict()
-        if isinstance(usage,dict):
+        from dataclasses import asdict,is_dataclass
+        if is_dataclass(usage):usage=asdict(usage)
+        elif hasattr(usage,'to_dict'):usage=usage.to_dict()
+        if isinstance(usage,dict) and getattr(response,'usage_reported',True):
             prov['resource_usage']={k:v for k,v in usage.items() if k in {'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens'} and isinstance(v,int) and not isinstance(v,bool) and v>=0}
         return {'proposal':raw,'provenance':prov}
 

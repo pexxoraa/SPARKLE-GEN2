@@ -1,3 +1,4 @@
+.mobile-nav{display:none}
 @font-face{font-family:SparkleSans;src:url('/fonts/SparkleSans.ttf') format('truetype');font-weight:400;font-display:swap}
 @font-face{font-family:SparkleSans;src:url('/fonts/SparkleSans-Bold.ttf') format('truetype');font-weight:700 900;font-display:swap}
 :root{--bg:#05070b;--bg-soft:#090d14;--panel:#0b111b;--panel-2:#0f1723;--line:rgba(255,255,255,.075);--line-hi:rgba(255,255,255,.14);--text:#f4f7fb;--muted:#8793a6;--cyan:#73e5ff;--blue:#7a8cff;--violet:#ae82ff;--green:#69e0ad;--amber:#ffc96b;--danger:#ff7189;--shadow:0 24px 80px rgba(0,0,0,.38);font-family:SparkleSans,Inter,Roboto,"Helvetica Neue",Arial,sans-serif;color-scheme:dark}
@@ -106,3 +107,14 @@ body:before{content:"";position:fixed;inset:0;pointer-events:none;background:rad
 @media(max-width:600px){.chat-view{padding:6px}.chat-view .chat-layout{border-radius:18px}.chat-toolbar{height:auto!important;min-height:58px!important}.chat-controls #session-picker{max-width:95px}.messages{padding:22px 10px 155px!important}.message.user{max-width:92%!important}.message.assistant{max-width:98%!important}.composer.chat-composer{bottom:8px;left:8px;right:8px}.thread-strip{padding:9px 12px!important}}
 
 .chat-view .chat-shell{position:relative}
+/* Personal OS inspection surfaces */
+.sidebar #nav{overflow-y:auto;min-height:0;flex:1}
+.workspace-table-wrap{overflow-x:auto}
+.workspace-table{width:100%;border-collapse:collapse;text-align:left;font-size:.9rem}
+.workspace-table th,.workspace-table td{padding:12px;border-bottom:1px solid #ffffff15;vertical-align:top}
+.workspace-dialog{width:min(900px,92vw);max-height:85vh;overflow:auto;background:#15151b;color:#eee;border:1px solid #ffffff30;border-radius:20px;padding:24px}
+.workspace-dialog::backdrop{background:#000a}
+.progress-meter{display:block;width:100%;height:6px;border:0;background:#ffffff12;appearance:none}
+.progress-meter::-webkit-progress-bar{background:#ffffff12}
+.progress-meter::-webkit-progress-value{background:#b79aff}
+.progress-meter::-moz-progress-bar{background:#b79aff}

@@ -24,3 +24,10 @@ Supported write-capable specialist grants are `memory_write`, narrowly bounded `
 ## Perception-grounded robot context
 
 Robot-state questions may use `perception_observe`, which obtains a fresh registered source observation, normalizes/persists it, performs bounded same-robot fusion, updates the existing world model, and returns only freshness/provenance-backed state. PersonalAgent does not infer a current robot pose from stale persisted state. Motion remains a separate approval-required action and requires fresh perception when the integrated perception service is configured.
+
+
+## Structured profiles and results
+
+The registry includes the sixteen actual native specialist names and bounded Gen-2 profiles, while PersonalAgent remains the coordinator. A selected profile is persisted independently of the user's request, reaches planner context and determines the coordinating agent identity on validated steps. AgentResult carries success/status/summary/data/artifacts/observations/recommendations/errors/next_actions/confidence. Native specialist delegation still uses the existing typed request/result, bounded multi-agent orchestration, exact grants and persistent trace rereads.
+
+Agent Builder creates native installed definitions; AI/Application builders reuse native structured specifications, workspace artifacts and controlled testing/install boundaries. Deployment to a new remote target remains a separate authorized environment action. Registration/profile availability alone is not fresh acceptance of every possible generated application.

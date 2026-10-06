@@ -26,6 +26,23 @@ class ExecutionLifecycleService:
     """Own the PersonalAgent execution lifecycle; agent remains the compatibility facade."""
 
     @staticmethod
+    def planning_error(exc):
+        categories={'configuration_failure','authentication_failure','model_unavailable','timeout','rate_limited','provider_failure','connectivity_failure','malformed_response'}
+        category=getattr(exc,'category',None)
+        if not isinstance(category,str) or category not in categories:category='validation_failure' if isinstance(exc,PlanValidationError) else 'planning_failure'
+        detail={'error_type':type(exc).__name__,'error_category':category,'retryable':getattr(exc,'retryable',False) is True}
+        code=str(exc).split(':',1)[0]
+        public_codes={'planner_invalid_json','planner_output_not_object','planner_success_criteria_invalid','planner_goal_criterion_not_object','planner_goal_criterion_missing_required_field','planner_goal_criterion_invalid_description','planner_goal_criterion_invalid_verification_method','planner_derived_field_forbidden','invalid_structured_output','model_capability_unavailable','gen2_capability_route_mismatch','planning_budget'}
+        if code in public_codes:detail['error_code']=code
+        component=getattr(exc,'schema_component',None)
+        if isinstance(component,str) and component in {'step','model_provenance','proposal'}:
+            fields=getattr(exc,'unexpected_fields',[])
+            public_fields={'preferred_agent','preferred_model','model','agent','order','risk','status','description','tool','metadata'}
+            detail['schema_component']=component;detail['error_category']='validation_failure'
+            detail['unexpected_fields']=sorted({field for field in fields if isinstance(field,str) and field in public_fields}) if isinstance(fields,list) else []
+        return detail
+
+    @staticmethod
     def start(agent,request,*,user_id='user',target_device_id=None,target_device_kind=None,agent_profile=None):
             if not isinstance(request,str) or not request.strip():raise ValueError('request is required')
             if not isinstance(user_id,str) or not user_id.strip() or len(user_id)>256:raise ValueError('user_id is invalid')
@@ -45,7 +62,11 @@ class ExecutionLifecycleService:
                 except Exception as exc:
                     agent.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
             if context is None:
-                context=agent.gen1.retrieve_context(request,goal.context_requirements)
+                try:context=agent.gen1.retrieve_context(request,goal.context_requirements)
+                except Exception as exc:
+                    goal.status=GoalStatus.WAITING;run.status='CONTEXT_UNAVAILABLE';agent.store.save_goal(goal);agent.store.save_task_run(run);agent.graph.execution(goal,None,run)
+                    agent.store.event(goal.goal_id,'context_unavailable',{'error_type':type(exc).__name__},now())
+                    return {'goal_id':goal.goal_id,'task_run_id':run.task_run_id,'trace_id':trace_id,'status':'WAITING','text':'Context is unavailable. The saved execution can be retried.','checked':[],'verified':[],'approvals':[]}
             if agent.documents is not None:
                 try:
                     docctx=agent.documents.context(request,user_id=user_id,k=5,max_chars=5000)
@@ -70,11 +91,11 @@ class ExecutionLifecycleService:
                     for permission,risk in decisions:agent.store.save_permission(goal.goal_id,permission);agent.store.save_risk(goal.goal_id,risk)
                     break
                 except (PlannerError,PlanValidationError,RuntimeError,ValueError) as exc:
-                    last_error=exc;agent.store.event(goal.goal_id,'planning_failed',{'attempt':attempt+1,'error_type':type(exc).__name__,'reason':str(exc)[:200]},now());agent.traces.record('planning','planner','FAILED',goal_id=goal.goal_id,trace_id=trace_id,detail={'attempt':attempt+1,'error_type':type(exc).__name__})
+                    last_error=exc;detail={'attempt':attempt+1}|ExecutionLifecycleService.planning_error(exc);minimal['planning_feedback']=dict(detail);agent.store.event(goal.goal_id,'planning_failed',detail,now());agent.traces.record('planning','planner','FAILED',goal_id=goal.goal_id,trace_id=trace_id,detail=detail)
             else:
                 goal.status=GoalStatus.BLOCKED if isinstance(last_error,PlanValidationError) else GoalStatus.WAITING;goal.updated_at=now();agent.store.save_goal(goal)
                 run.status=goal.status.value;run.updated_at=now();agent.store.save_task_run(run);agent.graph.execution(goal,None,run)
-                return {'goal_id':goal.goal_id,'task_run_id':run.task_run_id,'trace_id':trace_id,'status':goal.status.value,'text':f'Planning could not produce a safe executable plan: {last_error}. No tools were executed.','checked':[],'verified':[],'approvals':[]}
+                return {'goal_id':goal.goal_id,'task_run_id':run.task_run_id,'trace_id':trace_id,'status':goal.status.value,'text':'Planning could not produce a safe executable plan. The saved execution can be retried. No tools were executed.','planning_error':ExecutionLifecycleService.planning_error(last_error),'checked':[],'verified':[],'approvals':[]}
             goal.plan_id=plan.plan_id;goal.success_criteria=[c['description'] for c in proposal.success_criteria];goal.status=GoalStatus.PLANNED;goal.updated_at=now();agent.store.save_plan(plan);agent.store.save_goal(goal)
             criteria=list(proposal.success_criteria)
             criteria.extend([
@@ -92,14 +113,16 @@ class ExecutionLifecycleService:
 
     @staticmethod
     def replan(agent,goal_id):
-            goal=agent.store.load_goal(goal_id);old_plan=agent.store.load_plan(goal.plan_id);old_run=agent.store.load_task_run_for_goal(goal_id);trace_id=old_run.trace_id or uuid.uuid4().hex
+            goal=agent.store.load_goal(goal_id);old_plan=agent.store.load_plan(goal.plan_id) if goal.plan_id else None;old_run=agent.store.load_task_run_for_goal(goal_id);trace_id=old_run.trace_id or uuid.uuid4().hex
             if goal.status not in {GoalStatus.WAITING,GoalStatus.BLOCKED,GoalStatus.FAILED}:raise ValueError('goal is not eligible for replanning')
             if any(a.status==ApprovalStatus.PENDING for a in agent.store.approvals_for_goal(goal_id)):raise ValueError('pending approvals must be resolved before replanning')
             attempt=agent._replan_attempts(goal_id)+1;agent.store.event(goal_id,'replan_attempted',{'attempt':attempt},now());agent.traces.record('recovery','personal_agent','REPLAN_STARTED',goal_id=goal_id,task_run_id=old_run.task_run_id,trace_id=trace_id,detail={'attempt':attempt})
             context=agent.gen1.retrieve_context(goal.user_request,goal.context_requirements)
             if agent.context_provider is not None:
                 try:
-                    richer=agent.context_provider.gather(goal.user_request);context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
+                    try:richer=agent.context_provider.gather(goal.user_request,owner_user_id=goal.user_id,optimized=True)
+                    except TypeError:richer=agent.context_provider.gather(goal.user_request)
+                    context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
                 except Exception as exc:agent.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
             if agent.documents is not None:
                 try:
@@ -107,6 +130,8 @@ class ExecutionLifecycleService:
                     if docctx.get('item_count'):context={'source':'documents+'+str(context.get('source','')),'rendered':('DOCUMENT_EVIDENCE:\n'+docctx['rendered']+'\nOTHER_CONTEXT:\n'+str(context.get('rendered','')))[:10000],'document_items':docctx['items']}
                 except Exception as exc:agent.store.event(goal.goal_id,'document_context_failed',{'error_type':type(exc).__name__},now())
             health=agent._execution_health();capabilities=list(health.get('tools',[]));schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities};minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'capability_registry':agent.capabilities.definitions(),'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
+            failures=[e['payload'] for e in agent.store.events(goal_id) if e['event_type'] in {'planning_failed','planning_retry_failed'}]
+            if failures:minimal['planning_feedback']={k:v for k,v in failures[-1].items() if k in {'error_type','error_category','error_code','schema_component','unexpected_fields'}}
             proposal,provenance=agent._propose(goal,minimal,capabilities,old_run);validator=PlanValidator(set(capabilities),agent.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
             agent._validate_plan_arguments(plan,schemas,goal)
             for planned_step in plan.steps:planned_step.preferred_agent=str((goal.metadata.get('agent_profile') or {}).get('agent_id','personal'))
@@ -120,7 +145,7 @@ class ExecutionLifecycleService:
                 key=(c['description'],c['verification_method'])
                 if key in seen:continue
                 seen.add(key);agent.store.save_criterion(GoalSuccessCriterion(uuid.uuid4().hex,goal_id,c['description'],c['verification_method'],CriterionStatus.PENDING,{}))
-            run=TaskRun(uuid.uuid4().hex,goal_id,None,[],[],[x.step_id for x in plan.steps],[],[],[],now(),now(),goal.deadline,'RUNNING',trace_id);agent.store.save_task_run(run);agent.store.save_goal(goal);agent.store.event(goal_id,'replanned',{'old_plan_id':old_plan.plan_id,'new_plan_id':plan.plan_id},now());agent.traces.record('planning','planner','REPLANNED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,detail={'plan_id':plan.plan_id})
+            run=TaskRun(uuid.uuid4().hex,goal_id,None,[],[],[x.step_id for x in plan.steps],[],[],[],now(),now(),goal.deadline,'RUNNING',trace_id);agent.store.save_task_run(run);agent.store.save_goal(goal);agent.store.event(goal_id,'replanned',{'old_plan_id':None if old_plan is None else old_plan.plan_id,'new_plan_id':plan.plan_id},now());agent.traces.record('planning','planner','REPLANNED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,detail={'plan_id':plan.plan_id})
             return agent.resume(goal_id)
 
     @staticmethod
@@ -131,8 +156,8 @@ class ExecutionLifecycleService:
             original=goal.user_request;goal.user_request=(original+'\nContinuation: '+instruction.strip())[:12000];goal.status=GoalStatus.WAITING;agent.store.save_goal(goal);agent.store.event(goal_id,'goal_continuation_requested',{'previous_status':'COMPLETED' if agent.store.load_task_run_for_goal(goal_id).status=='COMPLETED' else 'NONTERMINAL'},now())
             try:return agent.replan(goal_id)
             except (PlannerError,PlanValidationError,RuntimeError,ValueError) as exc:
-                goal=agent.store.load_goal(goal_id);goal.status=GoalStatus.WAITING;agent.store.save_goal(goal);agent.store.event(goal_id,'continuation_planning_failed',{'error_type':type(exc).__name__},now())
-                run=agent.store.load_task_run_for_goal(goal_id);return {'goal_id':goal_id,'task_run_id':run.task_run_id,'trace_id':run.trace_id,'status':'WAITING','text':f'Continuation is saved, but planning is unavailable: {exc}. No tools were executed.','checked':[],'verified':[],'approvals':[],'gen1_approvals':[],'model_provenance':agent.store.provenance_for_goal(goal_id),'criteria':[c.to_dict() for c in agent.store.criteria_for_goal(goal_id)]}
+                goal=agent.store.load_goal(goal_id);goal.status=GoalStatus.WAITING;agent.store.save_goal(goal);agent.store.event(goal_id,'continuation_planning_failed',ExecutionLifecycleService.planning_error(exc),now())
+                run=agent.store.load_task_run_for_goal(goal_id);return {'goal_id':goal_id,'task_run_id':run.task_run_id,'trace_id':run.trace_id,'status':'WAITING','text':'Continuation is saved, but planning is unavailable. No tools were executed.','planning_error':ExecutionLifecycleService.planning_error(exc),'checked':[],'verified':[],'approvals':[],'gen1_approvals':[],'model_provenance':agent.store.provenance_for_goal(goal_id),'criteria':[c.to_dict() for c in agent.store.criteria_for_goal(goal_id)]}
 
     @staticmethod
     def cancel(agent,goal_id):
@@ -145,7 +170,19 @@ class ExecutionLifecycleService:
 
     @staticmethod
     def resume(agent,goal_id):
-            goal=agent.store.load_goal(goal_id);plan=agent.store.load_plan(goal.plan_id);run=agent.store.load_task_run_for_goal(goal_id)
+            goal=agent.store.load_goal(goal_id);run=agent.store.load_task_run_for_goal(goal_id)
+            if not goal.plan_id:
+                if run.status=='CAPTURED':raise ValueError('saved_task_needs_explicit_planning')
+                if agent.controls.apply(goal,run) or goal.status==GoalStatus.CANCELLED:
+                    agent.store.save_goal(goal);agent.store.save_task_run(run);agent.graph.execution(goal,None,run)
+                    return {'goal_id':goal_id,'task_run_id':run.task_run_id,'status':goal.status.value,'run_status':run.status,'text':'Execution '+run.status.lower()+'.','checked':[],'verified':[],'approvals':[]}
+                goal.status=GoalStatus.WAITING;agent.store.save_goal(goal)
+                try:return agent.replan(goal_id)
+                except (PlannerError,PlanValidationError,RuntimeError,ValueError,ConnectionError) as exc:
+                    goal=agent.store.load_goal(goal_id);run=agent.store.load_task_run_for_goal(goal_id);goal.status=GoalStatus.BLOCKED if isinstance(exc,PlanValidationError) else GoalStatus.WAITING;run.status='PLANNING_UNAVAILABLE';run.updated_at=now();agent.store.save_goal(goal);agent.store.save_task_run(run);agent.graph.execution(goal,None,run)
+                    agent.store.event(goal_id,'planning_retry_failed',ExecutionLifecycleService.planning_error(exc),now())
+                    return {'goal_id':goal_id,'task_run_id':run.task_run_id,'status':goal.status.value,'run_status':run.status,'text':'Planning remains unavailable. The execution and its budget are saved.','checked':[],'verified':[],'approvals':[]}
+            plan=agent.store.load_plan(goal.plan_id)
             if agent.controls.apply(goal,run):
                 agent._persist(goal,plan,run);return agent.report(goal,plan,run)
             if not run.trace_id:run.trace_id=uuid.uuid4().hex;agent.store.save_task_run(run)

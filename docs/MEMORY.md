@@ -11,3 +11,8 @@ The lifecycle is:
 Explicit Gen-2 approval does not itself create memory. Approval only submits the candidate through the existing Gen-1 `memory_write` boundary, which must return a verified pending review proposal. Model/system identities cannot approve candidates. If Gen-1 review approves, reconciliation records the authoritative Gen-1 `memory_id`; rejection never creates durable memory.
 
 Candidates persist in the Gen-2 store across restart while Gen-1 remains the only authoritative durable memory store. The retained `memory_id -> candidate -> goal/task/trace/evidence` link preserves provenance without duplicating Gen-1 memory contents.
+
+
+## Personal OS review and graph
+
+Memory Inspector reads owner-scoped candidate metadata from the authoritative store. Review/reject/reconcile uses MemoryCandidateService and the existing native review lifecycle. Authenticated mutations require conversation and approval scopes plus ownership. PROPOSED/WAITING candidates do not become verified knowledge merely because a UI card exists. Only PERSISTED candidates project knowledge/decision nodes. Related execution, document and experiment evidence is visible in Knowledge/Activity without raw result copying. See [PERSONAL_GRAPH.md](PERSONAL_GRAPH.md).

@@ -59,9 +59,15 @@ class PersonalGraphService:
             target = (goal.metadata or {}).get(field) or (getattr(goal, field, None) if field == 'parent_goal_id' else None)
             if target and self._owned(str(target), owner):
                 edges.append(self.edge(goal.goal_id, str(target), relation, owner))
+        for event in self.store.events(goal.goal_id)[-40:]:
+            identity = 'event:' + goal.goal_id + ':' + str(event['event_id'])
+            node = self.node(identity, 'event', str(event['event_type']).replace('_', ' '), 'RECORDED', owner)
+            node['occurred_at'] = event['created_at']
+            nodes.append(node)
+            edges.append(self.edge(identity, goal.goal_id, 'describes', owner))
         for node in nodes:
             if node['type'] not in {'person','agent','tool'}:node['goal_id']=goal.goal_id
-        self.store.save_graph(nodes, edges)
+        self.store.save_graph(nodes, edges,replace_relationships=[(goal.goal_id,owner,{'part_of','supports'})])
 
     def _owned(self, identity, owner):
         try:
@@ -85,8 +91,9 @@ class PersonalGraphService:
         kind = record.get('record_type') or ('learning' if record.get('plan_id') else 'experiment' if record.get('experiment_id') else 'document')
         nodes = [self.node(rid, kind, record.get('title') or record.get('subject') or record.get('filename') or record.get('hypothesis') or rid, record.get('status', 'ACTIVE'), owner)]
         edges = []
-        for field, relation in (('goal_id', 'supports'), ('project_id', 'part_of'), ('learning_plan_id', 'developed_by'),('research_id','investigates')):
-            target = record.get(field) or (record.get('metadata') or {}).get(field)
+        relationships=(('goal_id','supports'),('project_id','part_of'),('learning_plan_id','developed_by'),('research_id','investigates'),('execution_goal_id','executed_by'))
+        for field, relation in relationships:
+            target = record.get(field) if field in record else (record.get('metadata') or {}).get(field)
             if target and self._owned(str(target), owner):
                 edges.append(self.edge(str(rid), str(target), relation, owner))
         if kind=='learning':
@@ -106,9 +113,12 @@ class PersonalGraphService:
                 knowledge='knowledge:'+str(rid)
                 nodes.append(self.node(knowledge,'knowledge',record['conclusion'],record.get('verification_state','UNVERIFIED'),owner))
                 edges.append(self.edge(evidence,knowledge,'supports',owner))
-        self.store.save_graph(nodes, edges)
+        self.store.save_graph(nodes, edges,replace_relationships=[(str(rid),owner,{relation for _,relation in relationships})])
 
     def memory(self,candidate):
+        if isinstance(candidate,dict):
+            from ..memory_orchestration import MemoryCandidate
+            candidate=MemoryCandidate(**candidate)
         owner=candidate.owner_user_id
         if not self._owned(candidate.goal_id,owner):return
         nodes=[self.node(candidate.candidate_id,'memory',candidate.category,candidate.state,owner)]
@@ -140,7 +150,7 @@ class PersonalGraphService:
         for row in self.store.experiments():
             if row.get('owner_user_id','user')==owner:self.record(row)
         for candidate in self.store.memory_candidates():
-            if candidate.owner_user_id==owner:self.memory(candidate)
+            if candidate.get('owner_user_id','user')==owner:self.memory(candidate)
 
     def snapshot(self, owner='user', limit=500):
         return self.store.graph_snapshot(owner, limit=max(1, min(int(limit), 1000)))

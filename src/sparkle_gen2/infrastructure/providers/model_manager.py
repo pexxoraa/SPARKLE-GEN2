@@ -3,6 +3,7 @@ from dataclasses import asdict,dataclass
 from pathlib import Path
 from typing import Any
 from time import monotonic
+from .model_selection import selection_metadata,validate_constraints,permits
 
 
 def build_gen2_model_registry(*,path:Path|None=None,secrets=None):
@@ -89,13 +90,13 @@ class ModelCapabilityManager:
             config=raw.config;secret_refs=config.get('secret_refs',[]);secret_status=self.registry.secrets.status(secret_refs);configured=(rid in self.registry._injected_ids or not secret_refs or (all(secret_status.values()) if config.get('require_all_secret_refs') else any(secret_status.values())));configured=configured and (rid in self.registry._injected_ids or not config.get('requires_verified_transport') or bool(config.get('transport_verified',False)));hs=self.registry.health.status(rid)
             capabilities=self._validate_capabilities(config['capabilities']) if 'capabilities' in config else tuple(x for x in raw.roles if x in KNOWN_CAPABILITIES)
             inputs=self._validate_modalities(config.get('input_modalities',list(raw.modalities)),'input_modalities');outputs=self._validate_modalities(config.get('output_modalities',['text']),'output_modalities')
-            out.append(ModelRecord(rid,raw.provider,raw.model_id,raw.enabled,capabilities,inputs,outputs,bool(config.get('supports_tools',False) or 'tool_use' in capabilities),config.get('context_window'),config.get('max_output_tokens'),str(config.get('latency_class','balanced')),bool(config.get('allow_fallback',False)),configured,self._health_state(raw.enabled,configured,hs.get('state'),hs.get('reason')),hs.get('reason'),{'adapter':raw.adapter,'registry_health':hs.get('state'),'health_evidence_source':hs.get('evidence_source'),'active':rid==self.registry.active_id}))
+            out.append(ModelRecord(rid,raw.provider,raw.model_id,raw.enabled,capabilities,inputs,outputs,bool(config.get('supports_tools',False) or 'tool_use' in capabilities),config.get('context_window'),config.get('max_output_tokens'),str(config.get('latency_class','balanced')),bool(config.get('allow_fallback',False)),configured,self._health_state(raw.enabled,configured,hs.get('state'),hs.get('reason')),hs.get('reason'),{'adapter':raw.adapter,'registry_health':hs.get('state'),'health_evidence_source':hs.get('evidence_source'),'active':rid==self.registry.active_id,'selection_policy':selection_metadata(config)}))
         return out
     def _from_gateway(self):
         out=[]
         for i,m in enumerate(self.gen1.health().get('models',[])):
             caps=self._validate_capabilities(m['capabilities']) if 'capabilities' in m else tuple(x for x in m.get('roles',[]) if x in KNOWN_CAPABILITIES);inputs=self._validate_modalities(m.get('input_modalities',m.get('modalities',['text'])),'input_modalities');outputs=self._validate_modalities(m.get('output_modalities',['text']),'output_modalities');configured=bool(m.get('configured',m.get('enabled',False)));state=str(m.get('health','UNAVAILABLE'))
-            out.append(ModelRecord(str(m.get('record_id') or m.get('id') or f'model-{i}'),str(m.get('provider','unknown')),str(m.get('model') or m.get('model_id') or 'unknown'),bool(m.get('enabled',False)),caps,inputs,outputs,bool(m.get('supports_tools',False) or 'tool_use' in caps),m.get('context_window'),m.get('max_output_tokens'),str(m.get('latency_class','balanced')),bool(m.get('allow_fallback',False)),configured,self._health_state(bool(m.get('enabled',False)),configured,state,m.get('health_reason')),m.get('health_reason'),{'active':bool(m.get('active',False))}))
+            out.append(ModelRecord(str(m.get('record_id') or m.get('id') or f'model-{i}'),str(m.get('provider','unknown')),str(m.get('model') or m.get('model_id') or 'unknown'),bool(m.get('enabled',False)),caps,inputs,outputs,bool(m.get('supports_tools',False) or 'tool_use' in caps),m.get('context_window'),m.get('max_output_tokens'),str(m.get('latency_class','balanced')),bool(m.get('allow_fallback',False)),configured,self._health_state(bool(m.get('enabled',False)),configured,state,m.get('health_reason')),m.get('health_reason'),{'active':bool(m.get('active',False)),'selection_policy':selection_metadata(m)}))
         return out
     def inventory(self):return [m.to_dict() for m in self.records()]
     def records(self):
@@ -112,8 +113,10 @@ class ModelCapabilityManager:
     def eligible(self,capability,*,input_modalities=None,output_modalities=None,tools_required=False):
         required_caps=set(self._validate_capabilities([capability]));ins=set(self._validate_modalities(input_modalities or ['text'],'input_modalities'));outs=set(self._validate_modalities(output_modalities or ['text'],'output_modalities'))
         return [m.to_dict() for m in self.records() if m.enabled and m.configured and m.health not in {'UNAVAILABLE','BLOCKED'} and required_caps.issubset(m.capabilities) and ins.issubset(m.input_modalities) and outs.issubset(m.output_modalities) and (not tools_required or m.supports_tools)]
-    def route(self,requires,*,input_modalities=None,output_modalities=None,tools_required=False,preferred_id=None):
+    def route(self,requires,*,input_modalities=None,output_modalities=None,tools_required=False,preferred_id=None,constraints=None):
+        constraints=validate_constraints(constraints)
         req=set(self._validate_capabilities(requires));ins=set(self._validate_modalities(input_modalities or ['text'],'input_modalities'));outs=set(self._validate_modalities(output_modalities or ['text'],'output_modalities'));records=self.records();candidates=[m for m in records if m.enabled and m.configured and m.health not in {'UNAVAILABLE','BLOCKED'} and req.issubset(m.capabilities) and ins.issubset(m.input_modalities) and outs.issubset(m.output_modalities) and (not tools_required or m.supports_tools)]
+        candidates=[m for m in candidates if permits(m,constraints)]
         if preferred_id is None and self.registry is not None:
             preferred_id=None
             for capability in sorted(req):
@@ -127,8 +130,8 @@ class ModelCapabilityManager:
         fallback=preferred_id is not None and selected.record_id!=preferred_id
         if fallback and (not self.fallback_allowed or not selected.fallback_eligible):return CapabilityRoute('BLOCKED',tuple(sorted(req)),tuple(sorted(ins)),tuple(sorted(outs)),None,'fallback disabled by product policy',False)
         return CapabilityRoute(selected.health,tuple(sorted(req)),tuple(sorted(ins)),tuple(sorted(outs)),selected,'configured capability route' if not fallback else 'approved fallback route',fallback)
-    def complete(self,request,requires,*,input_modalities=None,output_modalities=None,tools_required=False,preferred_id=None):
-        route=self.route(requires,input_modalities=input_modalities or getattr(request,'input_modalities',['text']),output_modalities=output_modalities or ['text'],tools_required=tools_required or bool(getattr(request,'tools',[])),preferred_id=preferred_id)
+    def complete(self,request,requires,*,input_modalities=None,output_modalities=None,tools_required=False,preferred_id=None,constraints=None):
+        route=self.route(requires,input_modalities=input_modalities or getattr(request,'input_modalities',['text']),output_modalities=output_modalities or ['text'],tools_required=tools_required or bool(getattr(request,'tools',[])),preferred_id=preferred_id,constraints=constraints if constraints is not None else (getattr(request,'metadata',{}) or {}).get('model_constraints'))
         if route.selected is None:raise RuntimeError('model_capability_unavailable:'+','.join(route.required_capabilities))
         if self.registry is None:raise RuntimeError('model_registry_execution_unavailable')
         adapter=self.registry.adapter(route.selected.record_id)

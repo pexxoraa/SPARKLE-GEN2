@@ -76,3 +76,10 @@ The operations projection omits raw requested approval scope, hidden reasoning, 
 ## Notification attention state
 
 Personal Core and the Personal Operations Surface consume the owner-scoped final attention view rather than raw event volume. Notification cards can show grouped occurrence count, delivery/escalation decision, and the persisted concise `why` explanation. Authenticated `mark read` continues to require the existing device `notifications` scope and now also checks notification ownership. Suppressed decisions do not create UI notifications but remain durably auditable in notification-decision provenance.
+
+
+## Connected workspace surfaces
+
+Knowledge, Memory, Execution, Automation, Activity and System are authoritative API-backed views alongside Conversation, Tasks, Goals, Projects, Learning, Skills, Research and Approvals. Desktop navigation scrolls within the sidebar; mobile More opens the linked section sheet. Manual entry/editing forms populate their actual fields and use repaired update/delete routes. Execution inspection shows persisted steps, verification, criteria and recovery; controls reuse owner-checked PersonalAgent lifecycle methods.
+
+Plan with SPARKLE connects a saved source record to normal execution. Bounded completion records its execution status separately and preserves the source project's original goal/state. Memory review reuses approval scope; automation controls enter the normal conversation/policy path. Loading/empty/error/success states use escaped data. All eight modules and font resources are packaged, and the versioned service worker excludes API state. [PERSONAL_GRAPH.md](PERSONAL_GRAPH.md) maps each view to its endpoint.

@@ -2,7 +2,9 @@
 
 SPARKLE Gen-2 uses the existing Gen-1 `ModelRegistry` through a capability-first Gen-2 `ModelCapabilityManager` / `CapabilityRouter`. The production registry contains the verified NVIDIA/Nemotron model routes plus Google Gemini 3.8 Live for voice, and every configured record keeps `allow_fallback=false`; deterministic policy, permissions, approvals, e-stop, and independent verification remain authoritative over model output.
 
-Current verified production routes are:
+The route list below describes packaged defaults and recorded acceptance from earlier runs. It is not a current health probe. Runtime health and the dated audit distinguish configured routes from fresh inference.
+
+Recorded production routes are:
 
 - `reasoning`, `planning`, `coding`, `tool_use`, and `general` → NVIDIA Nemotron 3.5 Lightning (`nvidia/nemotron-3.5-lightning-30b-a3b`). Cycle58 exercised a real PersonalAgent goal: live Lightning planning selected the calculator, the tool executed, SPARKLE independently verified `42`, and the goal completed with `fallback=false`.
 - `multimodal` and `perception` with image input → NVIDIA Nemotron 3 Nano Omni (`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`). Cycle58 exercised real image inference through `DocumentIntelligenceService`; the grounded result and provider/model/request provenance were persisted.
@@ -24,3 +26,12 @@ The production registry contains a VoiceChat model record and semantic `voice` r
 ## Protected NVIDIA runtime resolution
 
 The finalization pass reuses the existing owner-only `~/.config/sparkle/gen2.env` through `build_gen2_secret_resolver()`. Only explicit allowlisted provider secret references are loaded; provider-specific helpers remain intentionally narrow. Real Gen-2 provider checks verified Lightning, Omni, Embed, Rerank, Content Safety and FLUX.2 Klein with `fallback=false`, while Gemini 3.8 Live separately completed SPARKLE-side realtime voice acceptance. NVIDIA VoiceChat remains independently gated and is not used as a fallback for Gemini.
+
+
+## Provider-independent planning and selection policy
+
+The October completion preserves the packaged default records and removes provider-name restrictions from the planning architecture. LocalGen1Gateway.plan uses ModelCapabilityManager.complete with planning/reasoning capabilities. Required modalities, health and fallback policy constrain selection. Alternate configured adapters are accepted when their capability contract matches. SPARKLE_GEN2_MODEL_REGISTRY can point to an explicitly supplied registry; credentials remain separate references.
+
+Optional model_constraints can require execution_location (local/remote), classification, maximum cost_per_million_tokens, task_complexity (simple/standard/complex) and latency_class (fast/balanced/deep). Registry metadata declares location, permitted privacy_classifications, cost_per_million_tokens and max_task_complexity. Unknown cost/location/quality metadata cannot satisfy an explicit constraint. SECRET input is rejected. These filters tighten capability eligibility and preserve configured no-fallback policy; they do not invent pricing or authorize another provider. Cost units are configured per million tokens, not a claim of an independently billed final amount.
+
+Planner requests carry saved goal model_constraints. Provider-reported usage is persisted when available; unreported tokens remain unknown. New planning errors expose safe classification and omit private exception text. Configured/available health does not prove a fresh inference completed.

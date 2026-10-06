@@ -9,6 +9,7 @@ class CapabilityState:
     evidence:str
     dependency:str|None=None
     limitation:str|None=None
+    evidence_source:str|None=None
     def __post_init__(self):
         if self.status not in VALID:raise ValueError('invalid capability status')
     def to_dict(self):return asdict(self)

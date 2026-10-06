@@ -167,3 +167,10 @@ The existing WorldModel now also provides bounded contradiction tracking for cro
 ## Adaptive learning orchestration
 
 Gen-2 now layers a restart-safe `LearningOrchestrator` over the existing authoritative Gen-1 `learning_progress` surface. A learning plan contains an owner, subject, objective, bounded curriculum units, assessments, weakness state, retraining recommendations, and provenance. Gen-1 progress is consumed only when independently verified; Gen-2 persists a digest/field shape rather than copying arbitrary raw progress payloads. Curriculum creation and assessment recording are state-changing operations and therefore use the existing exact-scope human approval path. Inspection is read-only. Mastery, weakness, and retraining are computed deterministically from approved assessment scores; model prose cannot mark a skill mastered.
+
+
+## October execution and Personal OS completion
+
+The authoritative layered module map is [root ARCHITECTURE.md](../ARCHITECTURE.md). New protocol, dispatch, verification, durable run-control/resource-budget and personal-graph/inspector/workflow services evolve the existing composition root. Public compatibility facades remain. SQLite migrations are additive.
+
+The execution and graph contracts, supported verification strategies, cooperative timeout behavior, source-record completion semantics and actual test evidence are documented in [EXECUTION_ENGINE.md](EXECUTION_ENGINE.md), [PERSONAL_GRAPH.md](PERSONAL_GRAPH.md) and [COMPLETION_AUDIT_2026-10-06.md](COMPLETION_AUDIT_2026-10-06.md).

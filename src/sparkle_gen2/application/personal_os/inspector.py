@@ -51,6 +51,8 @@ class PersonalOSInspector:
         if goal.plan_id:
             method={'resume':'unpause','retry':'resume'}.get(action,action)
             return getattr(self.core.agent,method)(goal_id)
+        if action in {'retry','replan','resume'} and self.store.load_task_run_for_goal(goal_id).status!='CAPTURED':
+            return self.core.agent.resume(goal_id)
         if action=='cancel':
             goal.status=GoalStatus.CANCELLED;goal.updated_at=now();self.store.save_goal(goal)
             self.core.agent.controls.request(goal_id,'CANCELLED')
@@ -60,11 +62,11 @@ class PersonalOSInspector:
         raise ValueError('execution_has_no_plan; use Plan with SPARKLE')
 
     def memory(self, owner='user'):
-        return {'candidates':[PersonalOperationsService._safe(c.to_dict()) for c in self.store.memory_candidates() if c.owner_user_id==owner][-100:]}
+        return {'candidates':[PersonalOperationsService._safe(c) for c in self.store.memory_candidates() if c.get('owner_user_id','user')==owner][-100:]}
 
     def memory_decision(self, candidate_id, decision, owner='user', actor='user'):
         candidate=self.store.load_memory_candidate(candidate_id)
-        if candidate.owner_user_id!=owner:raise PermissionError('memory_owner_mismatch')
+        if candidate.get('owner_user_id','user')!=owner:raise PermissionError('memory_owner_mismatch')
         if decision=='reconcile':value=self.core.agent.reconcile_memory_candidate(candidate_id)
         elif decision in {'approve','reject'}:value=self.core.agent.decide_memory_candidate(candidate_id,decision,actor=actor)
         else:raise ValueError('invalid_memory_decision')

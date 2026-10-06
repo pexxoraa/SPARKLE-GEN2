@@ -194,7 +194,7 @@ class PersonalCore:
             if key in {'title','name','description','question','hypothesis','method','goal_id','project_id','learning_plan_id','unit_id','level'} and value is not None:
                 row[key]=str(value).strip()[:1000]
             elif key=='status':row[key]=str(value).upper()[:80]
-            elif key=='metadata' and isinstance(value,dict):row[key]=dict(value)
+            elif key=='metadata' and isinstance(value,dict):row[key]=dict(row.get(key) or {})|dict(value)
         row['updated_at']=now();self.store.save_os_record(row);PersonalGraphService(self.store).record(row);return row
 
     def delete_manual_record(self,record_id,*,owner_user_id='user'):
@@ -255,18 +255,18 @@ class PersonalCore:
         value=self.decide_approval(approval_id,decision,owner_user_id=owner_user_id,actor=actor)
         value['snapshot']=self.operations.snapshot(owner_user_id=owner_user_id)
         return value
-    def state(self,scopes=None):
-        scopes=set(scopes or []);out={}
+    def state(self,scopes=None,*,owner_user_id='user'):
+        scopes=set(scopes or []);out={};owned={g['goal_id'] for g in self.store.recent_goals(1000) if g.get('user_id','user')==owner_user_id}
         if 'task_status' in scopes:
-            goals=[g for g in self.store.recent_goals(200) if self._visible_operational_goal(g) and 'task_capture' not in set(g.get('constraints') or [])]
+            goals=[g for g in self.store.recent_goals(200) if g.get('goal_id') in owned and self._visible_operational_goal(g) and 'task_capture' not in set(g.get('constraints') or [])]
             task_goals=[g for g in self.store.recent_goals(200) if g.get('user_id','user')==owner_user_id and 'task_capture' in set(g.get('constraints') or []) and not ConversationService._looks_like_accidental_task_capture(str(g.get('normalized_objective') or g.get('user_request') or ''))]
             visible_ids={g.get('goal_id') for g in goals}|{g.get('goal_id') for g in task_goals}
             tasks=[r for r in self.store.all_task_runs(200) if r.get('goal_id') in {g.get('goal_id') for g in task_goals}]
-            out.update({'goals':goals,'tasks':tasks,'background_tasks':[x.to_dict() for x in self.store.background_tasks()]})
-        if 'approvals' in scopes:out['pending_approvals']=[a.to_dict() for a in self.store.all_approvals() if a.status.value=='PENDING']
+            out.update({'goals':goals,'tasks':tasks,'background_tasks':[x.to_dict() for x in self.store.background_tasks() if x.goal_id in owned]})
+        if 'approvals' in scopes:out['pending_approvals']=[a.to_dict() for a in self.store.all_approvals() if a.status.value=='PENDING' and a.goal_id in owned]
         if 'notifications' in scopes:
-            out['notifications']=self.notifications.attention('user',limit=50)
-            if self.delivery is not None:out['notification_channels']=self.delivery.channel_states('user');out['notification_delivery']={'recent':self.delivery.attempts('user')[-50:]}
+            out['notifications']=self.notifications.attention(owner_user_id,limit=50)
+            if self.delivery is not None:out['notification_channels']=self.delivery.channel_states(owner_user_id);out['notification_delivery']={'recent':self.delivery.attempts(owner_user_id)[-50:]}
         if 'device_management' in scopes:out['devices']=self.devices.list();out['autonomy']=self.autonomy.get()
         else:out['devices']=[]
         if 'conversation' in scopes:out['sessions']=self.store.all_sessions(50)

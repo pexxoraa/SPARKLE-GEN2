@@ -1,5 +1,5 @@
 function osEditorField(name,label,type='text',extra=''){return '<label class="field"><span>'+esc(label)+'</span><'+type+' name="'+esc(name)+'" '+extra+'></'+type+'></label>'}
-function osEditorOpen(kind){
+function osEditorOpen(kind,record=null){
   const modal=$('#os-editor'),fields=$('#os-editor-fields'),title=$('#os-editor-title'),kicker=$('#os-editor-kicker'),error=$('#os-editor-error');if(!modal||!fields)return;
   const configs={
     task:{kicker:'EXECUTION · TASK',title:'Add task',html:osEditorField('title','Task','input','maxlength="500" required placeholder="e.g. Finish C++ OOP revision"')},
@@ -10,7 +10,20 @@ function osEditorOpen(kind){
     research:{kicker:'KNOWLEDGE · RESEARCH',title:'Add research',html:osEditorField('title','Research topic','input','maxlength="300" required placeholder="Research topic"')+osEditorField('question','Research question','textarea','maxlength="1000" rows="3" placeholder="What are you trying to discover?"')+osEditorField('hypothesis','Hypothesis','textarea','maxlength="1000" rows="3" placeholder="Your current hypothesis"')+osEditorField('method','Method','textarea','maxlength="1000" rows="3" placeholder="How will you investigate it?"')+osEditorField('project_id','Linked project ID (optional)','input','maxlength="100" placeholder="Project ID"')}
   };
   const cfg=configs[kind];if(!cfg)return;
+  modal.dataset.kind=kind;delete modal.dataset.recordId;formReset();
+  fields.innerHTML=cfg.html;title.textContent=cfg.title;kicker.textContent=cfg.kicker;error.textContent='';
+  if(record){
+    modal.dataset.recordId=record.record_id||record.goal_id;title.textContent=cfg.title.replace('Add ','Edit ');
+    const values={...record,...(record.metadata||{}),title:record.title||record.name||record.normalized_objective||record.goal};
+    fields.querySelectorAll('input,textarea').forEach(input=>{if(values[input.name]!=null)input.value=String(values[input.name])});
+  }
   modal.classList.remove('hidden');modal.setAttribute('aria-hidden','false');fields.querySelector('input,textarea')?.focus();
+}
+function formReset(){const form=$('#os-editor-form');if(form)form.reset()}
+function editOSItem(kind,id){
+  const rows=kind==='task'?state.data?.tasks:(state.os?.[{goal:'goals',project:'projects',skill:'skills',research:'research'}[kind]]||[]);
+  const record=(rows||[]).find(x=>(x.record_id||x.goal_id)===id);
+  if(record)osEditorOpen(kind,record);else toast('Record changed. Refresh this page and try again.');
 }
 function osEditorClose(){const modal=$('#os-editor');if(modal){modal.classList.add('hidden');modal.setAttribute('aria-hidden','true')}}
 async function osEditorSubmit(event){
@@ -22,8 +35,11 @@ async function osEditorSubmit(event){
     else if(kind==='goal'){path='/api/os/goals';body={title,description:String(fd.get('description')||''),priority:Number(fd.get('priority')||5),deadline:String(fd.get('deadline')||'')}}
     else if(kind==='learning'){path='/api/os/learning';body={subject:String(fd.get('subject')||''),objective:String(fd.get('objective')||''),units:String(fd.get('units')||'').split(/\n+/).map(x=>x.trim()).filter(Boolean)}}
     else {path='/api/os/records';body={record_type:kind,title,description:String(fd.get('description')||''),status:'ACTIVE',metadata:{question:String(fd.get('question')||''),hypothesis:String(fd.get('hypothesis')||''),method:String(fd.get('method')||''),level:String(fd.get('level')||''),goal_id:String(fd.get('goal_id')||''),project_id:String(fd.get('project_id')||'')}}}
+    if(modal.dataset.recordId){
+      path=(kind==='task'?'/api/os/tasks/':kind==='goal'?'/api/os/goals/':'/api/os/records/')+encodeURIComponent(modal.dataset.recordId);
+    }
     const result=await api(path,{method:'POST',body:JSON.stringify(body)});
-    osEditorClose();await refresh();const view=kind==='task'?'tasks':kind==='goal'?'goals':kind==='learning'?'learning':kind==='skill'?'skills':'research';setView(view,{load:false});await loadOS();toast(result.text||('Added '+kind));
+    osEditorClose();await refresh();const view={task:'tasks',goal:'goals',project:'projects',learning:'learning',skill:'skills',research:'research'}[kind];setView(view,{load:false});await loadOS();toast(result.text||('Added '+kind));
   }catch(e){error.textContent=e.message}
 }
 async function planOSItem(kind,id){

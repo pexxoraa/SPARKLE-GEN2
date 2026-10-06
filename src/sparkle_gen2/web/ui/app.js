@@ -1,15 +1,15 @@
 /* SPARKLE UI bootstrap. Runtime code is split by responsibility under /ui/modules/. */
 (function(){
-  const modules=['core.js','os.js','conversation.js','voice.js','os-editor.js','interactions.js','bootstrap.js'];
+  const modules=['core.js','os.js','conversation.js','voice.js','os-editor.js','workspace.js','bootstrap.js','interactions.js'];
   let chain=Promise.resolve();
   for(const name of modules){
     chain=chain.then(()=>new Promise((resolve,reject)=>{
       const script=document.createElement('script');
-      script.src='/ui/modules/'+name+'?v=21';
+      script.src='/ui/modules/'+name+'?v=23';
       script.onload=resolve;
       script.onerror=()=>reject(new Error('Failed to load UI module: '+name));
       document.head.appendChild(script);
     }));
   }
-  chain.catch(error=>console.error('[SPARKLE] UI bootstrap failed',error));
+  chain.catch(error=>{console.error('[SPARKLE] UI bootstrap failed',error);const el=document.getElementById('core-status')||document.getElementById('pair-error');if(el){el.textContent='Interface failed to load. Refresh this page.';el.classList.remove('hidden')}});
 })();

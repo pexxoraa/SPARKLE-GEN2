@@ -85,7 +85,7 @@ class PersonalOperationsService:
             items.append({'item_id':x.get('item_id'),'source':x.get('source'),'key':x.get('key'),'title':self._clean_text(x.get('title',''))[:300],'summary':self._clean_text(x.get('summary',''))[:500],'score':x.get('score'),'action':x.get('action'),'state':x.get('state'),'carried_forward':bool(x.get('carried_from')),'carried_from':x.get('carried_from'),'provenance':self._safe(x.get('provenance') or {})})
         return {'status':brief.status,'day':brief.day,'brief':{'brief_id':brief.brief_id,'status':brief.status,'updated_at':brief.updated_at,'items':items},'unresolved_count':sum(x['state']=='OPEN' for x in items),'completed_count':sum(x['state']=='DONE' for x in items)}
     def _capabilities(self):
-        matrix=build_acceptance_matrix().summary();core=[{'capability':x['capability'],'status':x['status'],'dependency':x.get('dependency'),'limitation':x.get('limitation')} for x in matrix[:120]]
+        matrix=build_acceptance_matrix().summary();core=[{'capability':x['capability'],'status':x['status'],'dependency':x.get('dependency'),'limitation':x.get('limitation'),'evidence_source':x.get('evidence_source')} for x in matrix[:120]]
         models=[]
         if self.model_manager is not None:
             for cap in ('reasoning','planning','coding','tool_use','multimodal','voice','embedding','reranking','image_generation','safety','perception'):

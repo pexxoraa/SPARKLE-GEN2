@@ -133,6 +133,7 @@ class Gen1PlannerModel:
 
 
         try:
+            if not isinstance(raw.get('steps'),list):raise ValueError('PlanProposalStep collection must be a list')
             steps=[PlanProposalStep(**s) for s in raw['steps']]
             proposal=PlanProposal(
                 proposal_id=raw.get('proposal_id') or uuid.uuid4().hex,
@@ -144,7 +145,14 @@ class Gen1PlannerModel:
             )
             provenance=ModelProvenance(**prov)
         except Exception as exc:
-            raise PlannerError(f'invalid_structured_output:{type(exc).__name__}') from exc
+            error=PlannerError(f'invalid_structured_output:{type(exc).__name__}')
+            text=str(exc)
+            error.schema_component='step' if 'PlanProposalStep' in text else 'model_provenance' if 'ModelProvenance' in text else 'proposal'
+            known={'preferred_agent','preferred_model','model','agent','order','risk','status','description','tool','metadata'}
+            diagnostic_steps=raw.get('steps',[])
+            if not isinstance(diagnostic_steps,list):diagnostic_steps=[]
+            error.unexpected_fields=sorted({k for step in diagnostic_steps if isinstance(step,dict) for k in step if k in known})
+            raise error from exc
         return proposal,provenance
 
 class StaticPlanner:

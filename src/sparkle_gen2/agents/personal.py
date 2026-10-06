@@ -141,6 +141,7 @@ class PersonalAgent:
         decision=ResourceBudget(limits).check(usage,reservations={'planning_calls':1})
         if not decision['allowed']:raise PlanValidationError('planning_budget:'+decision['reason']+':'+decision['resource'])
         run.resource_usage['planning_calls']=int(run.resource_usage.get('planning_calls',0))+1
+        previous_status=run.status;run.status='PLANNING'
         self.store.save_task_run(run);started=monotonic()
         try:
             proposal,provenance=self.planner.propose(goal,context,capabilities)
@@ -150,7 +151,7 @@ class PersonalAgent:
             if total is not None:run.resource_usage['reported_tokens']=int(run.resource_usage.get('reported_tokens',0))+int(total)
             return proposal,provenance
         finally:
-            run.active_runtime_seconds+=max(0.0,monotonic()-started);run.updated_at=now();self.store.save_task_run(run)
+            run.status=previous_status;run.active_runtime_seconds+=max(0.0,monotonic()-started);run.updated_at=now();self.store.save_task_run(run)
 
     @staticmethod
     def _schema_argument_error(step,schemas):
