@@ -104,6 +104,27 @@ class ConversationAnswerTests(unittest.TestCase):
         db,_,_,service=self.make()
         try: self.assertEqual(service.send('research Python releases')['result']['goal_id'],'goal-1')
         finally: db.cleanup()
+    def test_natural_intentions_and_calculation_use_execution(self):
+        db,store,agent,service=self.make()
+        try:
+            for text in ('I want to build a photo studio website.', 'Help me prepare for GATE.',
+                         'Could you research ROS2 navigation?', 'Calculate 2+2.'):
+                out=service.send(text)
+                self.assertEqual(out['result']['goal_id'],'goal-1')
+                self.assertEqual(agent.gen1.model_manager.calls,[])
+        finally: db.cleanup()
+
+    def test_unrelated_action_in_active_thread_starts_new_execution(self):
+        db,store,agent,service=self.make()
+        try:
+            first=service.send('research Python releases')
+            resumed=[]
+            agent.continue_goal=lambda *args:resumed.append(args)
+            result=service.send('research ROS2 navigation',session_id=first['session_id'])
+            self.assertEqual(result['result']['goal_id'],'goal-1')
+            self.assertEqual(resumed,[])
+            self.assertIn('ROS2 navigation',result['message']['text'])
+        finally: db.cleanup()
     def test_active_session_still_answers_knowledge_question_directly(self):
         db,store,agent,service=self.make()
         try:

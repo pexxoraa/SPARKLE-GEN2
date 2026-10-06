@@ -34,4 +34,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-sparkle_gen2 = ["*.json", "web/*.html", "web/*.css", "web/*.js", "web/*.json", "web/*.png"]
+sparkle_gen2 = ["*.json", "web/*.html", "web/*.css", "web/*.js", "web/*.json", "web/*.png", "web/fonts/*.ttf", "web/ui/*.css", "web/ui/*.js", "web/ui/modules/*.js"]

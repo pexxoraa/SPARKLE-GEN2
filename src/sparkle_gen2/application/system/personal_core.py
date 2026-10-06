@@ -120,7 +120,7 @@ class PersonalCore:
     def create_manual_task(self,title,*,priority=5,deadline=None,metadata=None,owner_user_id='user'):
         from ...application.conversation import ConversationService
         title=self._os_text(title,'task title',500)
-        result=self.conversations._capture_task('Add a new task '+title)
+        result=self.conversations._capture_task('Add a new task '+title,owner_user_id=owner_user_id)
         if not result:raise ValueError('task title is invalid')
         goal=self.store.load_goal(result['goal_id'])
         try:priority=max(1,min(10,int(priority)))

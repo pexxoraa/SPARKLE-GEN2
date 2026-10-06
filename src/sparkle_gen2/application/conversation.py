@@ -113,6 +113,13 @@ class ConversationService:
         normalized=cls._normalize_turn(text)
         if not normalized:return False
         if cls._looks_like_goal_request(normalized):return True
+        # Intention and polite requests use the same execution boundary as
+        # imperative commands. Preserve the original request for the planner.
+        normalized=re.sub(r'^please\s+', '', normalized)
+        normalized=re.sub(
+            r"^(?:i (?:want|need|intend|plan|would like) (?:you )?to|i'd like to|help me(?: to)?|can you|could you|would you)\s+",
+            '', normalized,
+        )
         action_starts=(
             'open ','launch ','run ','start ','stop ','close ','delete ','remove ',
             'create ','make ','download ','upload ','send ','install ','execute ',
@@ -121,6 +128,8 @@ class ConversationService:
             'book ','set up ','setup ','turn on ','turn off ','connect ','disconnect ',
             'read ','summarize ','analyze ','generate ','deploy ','test ',
             'complete ','finish ','cancel ','approve ','reject ','acknowledge ','mark ',
+            'calculate ','compute ','inspect ','implement ','develop ','design ',
+            'organize ','evaluate ','measure ','remind ','learn ','study ',
             'can you open ','can you launch ','can you run ','can you start ',
             'can you stop ','can you close ','can you delete ','can you create ',
             'can you download ','can you send ','can you install ','can you execute ',
@@ -191,10 +200,10 @@ class ConversationService:
             payload.append({'title':title,'status':status,'task_run_id':run.get('task_run_id'),'goal_id':run.get('goal_id')})
         return {'text':'Here are your latest persisted tasks:\n'+'\n'.join(lines),'status':'COMPLETED','task_list':payload,'checked':['task store'],'verified':['task store reread']}
 
-    def _capture_task(self,text):
+    def _capture_task(self,text,*,owner_user_id='user'):
         label=self._task_label(text)
         if not label:return None
-        stamp=now();goal=Goal(uuid.uuid4().hex,text.strip(),label,constraints=['task_capture'],success_criteria=['task captured in Personal Tasks'],context_requirements=[],created_at=stamp,updated_at=stamp,status=GoalStatus.WAITING,user_id='user')
+        stamp=now();goal=Goal(uuid.uuid4().hex,text.strip(),label,constraints=['task_capture'],success_criteria=['task captured in Personal Tasks'],context_requirements=[],created_at=stamp,updated_at=stamp,status=GoalStatus.WAITING,user_id=owner_user_id)
         self.store.save_goal(goal)
         run=TaskRun(uuid.uuid4().hex,goal.goal_id,None,[],[],[],[],[],[{'type':'task_capture','label':label,'created_at':stamp}],stamp,stamp,None,'CAPTURED',None)
         self.store.save_task_run(run)
@@ -339,7 +348,7 @@ class ConversationService:
         active=s.active_goal_id;normalized=self._normalize_turn(text)
         if active:
             status_prefixes=('how did it go','how is it going','what are you doing','what are you waiting for','show me what you are doing','show me what you’re doing','status')
-            continue_prefixes=('continue','resume','keep working','run ','work on ','finish ','research ','prepare ','move ')
+            continue_prefixes=('continue','resume','keep working')
             if any(normalized.startswith(x) for x in status_prefixes):
                 try:return self._status(active)
                 except KeyError:pass

@@ -162,7 +162,7 @@ class PersonalOperationsService:
 
     def snapshot(self,*,owner_user_id='user',day=None):
         if not isinstance(owner_user_id,str) or not owner_user_id.strip():raise ValueError('operations owner required')
-        day=str(day or datetime.now(UTC).date().isoformat());date.fromisoformat(day);goals=self._goals(owner_user_id);gmap={g['goal_id']:g for g in goals};runs=[r for r in self.store.all_task_runs(200) if r.get('goal_id') in gmap and self._user_visible_work(gmap[r.get('goal_id')])];tasks=[self._task_projection(r,gmap[r['goal_id']]) for r in runs];active=[x for x in tasks if x['status'] in ACTIVE_GOALS][:self.max_items];completed=[x for x in tasks if x['status']=='COMPLETED'][:10]
+        day=str(day or datetime.now(UTC).date().isoformat());date.fromisoformat(day);goals=self._goals(owner_user_id);gmap={g['goal_id']:g for g in goals};runs=[r for r in self.store.all_task_runs(200) if r.get('goal_id') in gmap];tasks=[self._task_projection(r,gmap[r['goal_id']]) for r in runs];active=[x for x in tasks if x['status'] in ACTIVE_GOALS][:self.max_items];completed=[x for x in tasks if x['status']=='COMPLETED'][:10]
         approvals=[self._approval_projection(a,gmap[a.goal_id]) for a in self.store.all_approvals() if a.goal_id in gmap and self._status(a.status)=='PENDING'][:self.max_items]
         backgrounds=[x.to_dict() for x in self.store.background_tasks() if x.goal_id in gmap][:self.max_items];failures=[]
         for t in tasks:
