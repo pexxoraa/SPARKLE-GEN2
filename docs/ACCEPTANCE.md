@@ -79,3 +79,8 @@ Final regression after the code changes: 612 unittest tests passed; pytest passe
 ## Evidence dates and scope
 
 Packaged default_acceptance entries are recorded acceptance, not current runtime probes. evidence_source makes this explicit in their API projection. Configured runtime evidence must retain its own timestamp. A historical LIVE_VERIFIED label does not establish current credentials, connectivity, physical hardware or provider behavior. The [2026-10-06 audit](COMPLETION_AUDIT_2026-10-06.md) records fresh results and missing authoritative specifications.
+
+
+## Verified release publication — 2026-10-06
+
+The authorized normal push published implementation commit ee0e16a352d891b1d9605b30905cac1413900599 to pexxoraa/SPARKLE-GEN2 main. Git ls-remote and the authenticated GitHub main commit fetch independently confirmed that exact SHA. The source_control_push acceptance record now contains this dated proof. Packaged acceptance remains recorded evidence rather than a continuous current-runtime probe; unavailable physical targets/accounts and an unspecified production deployment retain their own gates. See [the final audit](COMPLETION_AUDIT_2026-10-06.md) for fresh software/provider evidence and original-specification limits.

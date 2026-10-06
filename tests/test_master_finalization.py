@@ -147,7 +147,7 @@ class MasterFinalizationTests(unittest.TestCase):
 
     def test_acceptance_matrix_covers_master_and_reconciled_live_capabilities(self):
         m=build_acceptance_matrix();self.assertEqual(set(m.items),MASTER_REQUIRED_CAPABILITIES);self.assertEqual(m.unresolved(),[])
-        for name in ('gmail','calendar','drive','github_connector','image_generation','browser_control','linux_application_control','gui_computer_control','workspace_test_execution','voice_stt_tts'):self.assertEqual(m.items[name].status,'LIVE_VERIFIED')
-        for name in ('mobile','mqtt','esp32','ros2_robotics','outlook','source_control_push'):self.assertEqual(m.items[name].status,'EXTERNALLY_BLOCKED')
+        for name in ('gmail','calendar','drive','github_connector','image_generation','browser_control','linux_application_control','gui_computer_control','workspace_test_execution','voice_stt_tts','source_control_push'):self.assertEqual(m.items[name].status,'LIVE_VERIFIED')
+        for name in ('mobile','mqtt','esp32','ros2_robotics','outlook'):self.assertEqual(m.items[name].status,'EXTERNALLY_BLOCKED')
 
 if __name__=='__main__':unittest.main()

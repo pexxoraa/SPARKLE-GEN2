@@ -14,8 +14,11 @@ class AcceptanceManifestTests(unittest.TestCase):
             if item['status']=='DEFERRED':self.assertTrue(item['limitation'])
     def test_external_dependencies_are_not_claimed_live(self):
         states={x['capability']:x for x in build_acceptance_matrix().summary()}
-        for name in ('mobile','ros2_robotics','source_control_push','outlook','mqtt','esp32'):
+        for name in ('mobile','ros2_robotics','outlook','mqtt','esp32'):
             self.assertEqual(states[name]['status'],'EXTERNALLY_BLOCKED');self.assertTrue(states[name]['dependency'])
+        self.assertEqual(states['source_control_push']['status'],'LIVE_VERIFIED')
+        self.assertIn('2026-10-06',states['source_control_push']['evidence'])
+        self.assertIn('GitHub main commit fetch',states['source_control_push']['evidence'])
         self.assertEqual(states['voice_stt_tts']['status'],'LIVE_VERIFIED');self.assertIn('Gemini 3.8 Live',states['voice_stt_tts']['evidence'])
         self.assertEqual(states['browser_control']['status'],'LIVE_VERIFIED');self.assertIn('HTTP 200',states['browser_control']['evidence'])
         for name in ('gmail','calendar','drive','github_connector','image_generation'):self.assertEqual(states[name]['status'],'LIVE_VERIFIED')

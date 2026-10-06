@@ -4,6 +4,7 @@ from .capability_status import CapabilityMatrix,CapabilityState
 def build_acceptance_matrix(runtime_evidence_path=None):
     m=CapabilityMatrix()
     verified={
+      'source_control_push':'2026-10-06 authorized normal push of implementation commit ee0e16a352d891b1d9605b30905cac1413900599 to pexxoraa/SPARKLE-GEN2 main; git ls-remote and authenticated GitHub main commit fetch independently confirmed the matching SHA; protected paths were excluded',
       'personal_agent':'Cycle1/2 vertical-slice and goal tests',
       'goal_plan_task_lifecycle':'persistent restart/retry/cancel/deadline/replan tests',
       'plan_validation':'schema/capability/dependency/cycle/policy negative tests',
@@ -86,7 +87,6 @@ def build_acceptance_matrix(runtime_evidence_path=None):
       'mqtt':('MQTT broker/device credentials','topic-bounded transport with wildcard denial, bounded message payloads, authenticated/TLS health assertions when advertised, and independent verification software complete'),
       'ros2_robotics':('ROS2 robot gateway + safety controller + independent e-stop','allowlisted ROS2 transport, safety authorization, direct-motor denial/e-stop and independent post-command verification complete'),
       'robotics_engineer_live':('real robot/ROS2 target','bounded Robotics Engineer workspace now projects existing robot/world/perception/experiment/document state and verified motion remains gated by RobotSafetyGateway; no physical robot/ROS2 target is connected'),
-      'source_control_push':('explicit authorization for a real remote write during an acceptance run','repository remote reads work and a noninteractive write dry-run authenticated successfully during master finalization; this run explicitly forbids real pushes, so no remote mutation was performed and live write acceptance remains blocked by run policy'),
     }
     for capability,(dependency,evidence) in blocked.items():m.set(CapabilityState(capability,'EXTERNALLY_BLOCKED',evidence,dependency))
     m.set(CapabilityState('production_deployment','DEFERRED','No deployment target/runtime was specified; repository and local runtime remain testable',limitation='deployment target selection is a human/environment decision'))
