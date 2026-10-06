@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import re
 from .context_engine import ContextItem,PersonalContextEngine
 
 class PersonalContextAssembler:
@@ -7,9 +9,69 @@ class PersonalContextAssembler:
         self.engine=engine or PersonalContextEngine();self.personal_data=personal_data;self.connectors=connectors;self.store=store;self.devices=devices;self.world=world;self.semantic_index=semantic_index
     def _item(self,source,key,value,provenance=None,freshness=1.0,relevance=1.0):
         return ContextItem(source,key,str(value),freshness,relevance,'ALLOW',dict(provenance or {}))
-    def gather(self,goal,*,owner_user_id='user'):
+
+    @staticmethod
+    def _goal_text(goal):
+        return ' '.join(str(goal).lower().split())
+
+    @classmethod
+    def _needs_email(cls,goal):
+        text=cls._goal_text(goal)
+        return any(token in text for token in (
+            'email','emails','mail','mailbox','inbox','outlook',
+            'gmail','message','messages'
+        ))
+
+    @classmethod
+    def _needs_files(cls,goal):
+        text=cls._goal_text(goal)
+        return any(token in text for token in (
+            'file','files','document','documents','pdf','spreadsheet',
+            'csv','attachment','folder','directory','workspace',
+            'source code','codebase','script','python file'
+        ))
+
+    @classmethod
+    def _needs_semantic(cls,goal):
+        text=cls._goal_text(goal)
+        words=set(re.findall(r'[a-z0-9_]+',text))
+        if words & {
+            'my','mine','our','memory','remember','preference','preferences',
+            'project','projects','task','tasks','research','learning','course',
+            'goal','goals','decision','decisions','document','documents',
+            'file','files','email','emails','calendar','meeting','meetings',
+            'schedule','github','repository','repo','robot','robotics',
+            'device','devices','today','tomorrow','recent','latest'
+        }:
+            return True
+
+        return any(
+            re.search(rf'\b{re.escape(phrase)}\b', text)
+            for phrase in (
+                'what i',
+                'what do i',
+                'who am i',
+                'my history',
+                'my preferences',
+                'my memory',
+                'source code',
+                'codebase',
+            )
+        )
+    @classmethod
+    def _needs_personal_data(cls,goal):
+        text=cls._goal_text(goal)
+        return any(token in text.split() for token in (
+            'my','mine','our','personal','remember','memory',
+            'preference','preferences','project','projects',
+            'task','tasks','research','learning','course',
+            'goal','goals','decision','decisions','profile',
+            'history','previous','past'
+        ))
+
+    def gather(self,goal,*,owner_user_id='user',optimized=False):
         sources={}
-        if self.personal_data is not None:
+        if self.personal_data is not None and (not optimized or self._needs_personal_data(goal)):
             for source in ('memory','knowledge','projects','tasks','learning','research'):
                 try:r=self.personal_data.retrieve(source,goal,limit=5);sources.setdefault(source,[]).append(self._item(source,source,r.get('output'),{'tool':r.get('tool'),'verification':r.get('verification')}))
                 except Exception:pass
@@ -17,13 +79,28 @@ class PersonalContextAssembler:
                 r=self.personal_data.retrieve('memory',goal,limit=5);sources.setdefault('preferences',[]).append(self._item('preferences','preferences',r.get('output'),{'tool':r.get('tool'),'semantic':'preferences'}))
             except Exception:pass
         if self.connectors is not None:
-            for name,scope in (('outlook','outlook.read'),('files','files.read')):
-                try:
-                    h=self.connectors.health(name,owner_user_id=owner_user_id)
-                    if h.get('status') not in {'CONNECTED','HEALTHY'}:continue
-                    op='search' if name in {'outlook','files'} else 'list';r=self.connectors.invoke(name,op,{'query':goal},scope,owner_user_id=owner_user_id);item=self._item(name,name,r.get('result'),{'connector':name});sources.setdefault(name,[]).append(item)
-                    if name=='outlook':sources.setdefault('email',[]).append(self._item('email',name,r.get('result'),{'connector':name}))
-                except Exception:pass
+            if not optimized:
+                for name,scope in (('outlook','outlook.read'),('files','files.read')):
+                    try:
+                        h=self.connectors.health(name,owner_user_id=owner_user_id)
+                        if h.get('status') not in {'CONNECTED','HEALTHY'}:continue
+                        op='search' if name in {'outlook','files'} else 'list';r=self.connectors.invoke(name,op,{'query':goal},scope,owner_user_id=owner_user_id);item=self._item(name,name,r.get('result'),{'connector':name});sources.setdefault(name,[]).append(item)
+                        if name=='outlook':sources.setdefault('email',[]).append(self._item('email',name,r.get('result'),{'connector':'outlook'}))
+                    except Exception:pass
+            else:
+                if self._needs_email(goal):
+                    try:
+                        h=self.connectors.health('outlook',owner_user_id=owner_user_id)
+                        if h.get('status') in {'CONNECTED','HEALTHY'}:
+                            r=self.connectors.invoke('outlook','search',{'query':goal},'outlook.read',owner_user_id=owner_user_id);item=self._item('outlook','outlook',r.get('result'),{'connector':'outlook'});sources.setdefault('outlook',[]).append(item);sources.setdefault('email',[]).append(self._item('email','outlook',r.get('result'),{'connector':'outlook'}))
+                    except Exception:pass
+
+                if self._needs_files(goal):
+                    try:
+                        h=self.connectors.health('files',owner_user_id=owner_user_id)
+                        if h.get('status') in {'CONNECTED','HEALTHY'}:
+                            r=self.connectors.invoke('files','search',{'query':goal},'files.read',owner_user_id=owner_user_id);item=self._item('files','files',r.get('result'),{'connector':'files'});sources.setdefault('files',[]).append(item)
+                    except Exception:pass
             try:
                 calendar_ops={x.get('operation') for x in self.connectors.capabilities('calendar')}
             except Exception:calendar_ops=set()
@@ -92,7 +169,7 @@ class PersonalContextAssembler:
                 except Exception:detail={'status':'UNAVAILABLE','verified':False}
                 items.append(self._item('devices',d['device_id'],{'record':d,'health':detail},{'device_id':d['device_id']}))
             if items:sources['devices']=items
-        if self.semantic_index is not None:
+        if self.semantic_index is not None and (not optimized or self._needs_semantic(goal)):
             try:sources['semantic']=self.semantic_index.context_items(goal,k=5)
             except Exception:pass
         if self.world is not None:

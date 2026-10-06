@@ -71,7 +71,7 @@ class Cycle56Tests(unittest.TestCase):
             store,_,daily,svc=self.make_service(d);self.seed_goal(store,'g','user');agent=PersonalAgent(store,LocalGen1Gateway(SparkleSystem()),planner=StaticPlanner(ops_plan()),daily_os_service=daily,operations_service=svc);core=PersonalCore((store,agent,SessionService(store)));server=build_server(core,'127.0.0.1',0);threading.Thread(target=server.serve_forever,daemon=True).start();base=f'http://127.0.0.1:{server.server_address[1]}'
             try:
                 code=core.devices.create_enrollment_code()['code'];_,en=request(base+'/api/enroll',data={'code':code,'name':'Ops','kind':'laptop','os':'Linux','capabilities':['task_status']});_,snap=request(base+'/api/operations?day=2026-09-19',token=en['token']);self.assertEqual(snap['operations']['pending_approvals'],[]);self.assertEqual(snap['today']['notifications'],[]);self.assertEqual(snap['intelligence']['world_state']['status'],'UNAVAILABLE')
-                with urllib.request.urlopen(base+'/',timeout=5) as r:html=r.read().decode();self.assertIn('Personal operations',html);self.assertIn('Daily Brief',html);self.assertIn('Intelligence & state',html)
+                with urllib.request.urlopen(base+'/',timeout=5) as r:html=r.read().decode();self.assertIn('Active work',html);self.assertIn('DAILY BRIEF',html);self.assertIn('SYSTEM STATE',html)
             finally:server.shutdown();server.server_close()
     def test_dashboard_approval_executes_existing_agent_path_and_rereads_state(self):
         with tempfile.TemporaryDirectory() as d:

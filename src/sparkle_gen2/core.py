@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json,uuid
+from time import monotonic
 from datetime import UTC,datetime,timedelta
 from typing import Any
 from .core_time import now
@@ -23,11 +24,24 @@ class PersonalAgent:
         if not 0<=planner_retries<=2:raise ValueError('planner_retries out of range')
         if not 0<=max_replans<=3:raise ValueError('max_replans out of range')
         self.store=store;self.gen1=gen1;self.planner=planner or Gen1PlannerModel(gen1);self.policy=policy or PolicyEngine();self.context_provider=context_provider;self.connectors=connector_manager;self.documents=document_service;self.images=image_service;self.perception=perception_service;self.daily_os=daily_os_service;self.operations=operations_service;self.notifications=notification_service;self.notification_delivery=getattr(notification_service,'delivery',None);self.learning=learning_service;self.traces=tracer or TraceRecorder(store);self.memory=MemoryCandidateService(store,gen1,self.policy);self.delegation=SpecialistDelegationService(store,gen1,self.policy);self.failures=FailureClassifier();self.max_iterations=max_iterations;self.planner_retries=planner_retries;self.max_replans=max_replans
+        self._execution_health_cache=None
+        self._execution_health_cache_at=0.0
+        self._execution_health_ttl=5.0
         self.automation=AutomationOrchestrator(store,gen1,lambda:self) if AutomationOrchestrator.available(gen1) else None
-    def _goal(self,request,user_id='user'):
-        stamp=now();return Goal(uuid.uuid4().hex,request.strip(),' '.join(request.strip().split()),success_criteria=[],context_requirements=['relevant Gen-1 context'],created_at=stamp,updated_at=stamp,status=GoalStatus.CREATED,user_id=user_id)
+    def _goal(self,request,user_id='user',target_device_id=None,target_device_kind=None):
+        stamp=now();constraints=[]
+        if target_device_id:constraints.append('target_device_id:'+str(target_device_id))
+        if target_device_kind:constraints.append('target_device_kind:'+str(target_device_kind))
+        return Goal(uuid.uuid4().hex,request.strip(),' '.join(request.strip().split()),constraints=constraints,success_criteria=[],context_requirements=['relevant Gen-1 context'],created_at=stamp,updated_at=stamp,status=GoalStatus.CREATED,user_id=user_id)
     def _execution_health(self):
-        base=dict(self.gen1.health());tools=list(base.get('tools',[]));definitions=list(base.get('tool_definitions',[]))
+        stamp=monotonic()
+        if self._execution_health_cache is not None and stamp-self._execution_health_cache_at < self._execution_health_ttl:
+            base=dict(self._execution_health_cache)
+        else:
+            base=dict(self.gen1.health())
+            self._execution_health_cache=dict(base)
+            self._execution_health_cache_at=stamp
+        tools=list(base.get('tools',[]));definitions=list(base.get('tool_definitions',[]))
         if self.delegation.available() and 'specialist_delegate' not in tools:
             tools.append('specialist_delegate');definitions.append({'name':'specialist_delegate','description':'Delegate bounded read-only analysis to certified Gen-1 specialists. Specialists are explicit, unique, allowlisted, and retain Gen-1 tool restrictions.','parameters':{'type':'object','properties':{'specialists':{'type':'array','items':{'type':'string'},'minItems':1},'objective':{'type':'string'},'inputs':{'type':'object'},'constraints':{'type':'array','items':{'type':'string'}},'required_evidence':{'type':'array','items':{'type':'string'}},'authorized_action':{'type':'object','properties':{'tool':{'type':'string'},'arguments':{'type':'object'}},'required':['tool','arguments'],'additionalProperties':False}},'required':['specialists','objective'],'additionalProperties':False}})
         if self.notifications is not None:
@@ -50,7 +64,7 @@ class PersonalAgent:
                 {'name':'connector_inspect','description':'Inspect one registered connector, its operations, authorization state, and availability. Read-only.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'}},'required':['connector_id'],'additionalProperties':False}},
                 {'name':'connector_capabilities','description':'List typed operations/capabilities for one connector. Read-only.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'}},'required':['connector_id'],'additionalProperties':False}},
                 {'name':'connector_health','description':'Recheck one connector through its existing adapter/transport and return bounded health evidence. Read-only.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'}},'required':['connector_id'],'additionalProperties':False}},
-                {'name':'connector_read','description':'Invoke one exact registered READ operation through ConnectorManager. It cannot invoke connector writes/control and still obeys connector authorization, owner isolation, classification, central policy, and verification.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'},'operation':{'type':'string'},'arguments':{'type':'object'},'classification':{'type':'string','enum':['PUBLIC','PRIVATE']}},'required':['connector_id','operation','arguments'],'additionalProperties':False}},
+                {'name':'connector_read','description':'Invoke one exact registered READ operation through ConnectorManager. It cannot invoke connector writes/control and still obeys connector authorization, owner isolation, classification, central policy, and verification.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'},'operation':{'type':'string'},'arguments':{'type':'object'},'classification':{'type':'string','enum':['PUBLIC','PRIVATE']},'device_id':{'type':'string'}},'required':['connector_id','operation','arguments'],'additionalProperties':False}},
                 {'name':'connector_invoke','description':'Invoke one exact registered connector mutation/control operation through ConnectorManager. Requires human approval at the PersonalAgent boundary and still obeys underlying connector policy/authorization/verification.','parameters':{'type':'object','properties':{'connector_id':{'type':'string'},'operation':{'type':'string'},'arguments':{'type':'object'},'classification':{'type':'string','enum':['PUBLIC','PRIVATE','SENSITIVE','HIGHLY_SENSITIVE','DEVICE_CONTROL']},'device_id':{'type':'string'}},'required':['connector_id','operation','arguments'],'additionalProperties':False}},
             ]
             for d in defs:
@@ -91,6 +105,10 @@ class PersonalAgent:
             for d in auto_defs:
                 if d['name'] not in tools:tools.append(d['name']);definitions.append(d)
         base['tools']=sorted(set(tools));base['tool_definitions']=definitions;return base
+    def invalidate_execution_health_cache(self):
+        self._execution_health_cache=None
+        self._execution_health_cache_at=0.0
+
     @staticmethod
     def _schema_argument_error(step,schemas):
         """Return a deterministic argument-validation error, or None."""
@@ -119,10 +137,28 @@ class PersonalAgent:
                 return {'error':'unexpected_arguments','arguments':extras}
         return None
 
-    def _validate_plan_arguments(self,plan,schemas):
-        """Reject planner output with missing/unknown tool arguments before execution."""
-        errors=[]
+    def _validate_plan_arguments(self,plan,schemas,goal=None):
+        """Validate planner arguments and preserve an explicit target-device constraint."""
+        errors=[];target_device_id=None;target_device_kind=None
+        if goal is not None:
+            for constraint in list(goal.constraints or []):
+                if isinstance(constraint,str) and constraint.startswith('target_device_id:'):
+                    target_device_id=constraint.split(':',1)[1].strip() or None
+                elif isinstance(constraint,str) and constraint.startswith('target_device_kind:'):
+                    target_device_kind=constraint.split(':',1)[1].strip().lower() or None
+        expected_connector={'computer':'computer','linux':'linux','mobile':'mobile'}.get(target_device_kind)
         for step in plan.steps:
+            if target_device_id and step.preferred_tool in {'connector_read','connector_invoke'}:
+                props=((schemas.get(step.preferred_tool) or {}).get('parameters') or {}).get('properties') or {}
+                if 'device_id' in props:
+                    current=step.arguments.get('device_id')
+                    if not current:step.arguments['device_id']=target_device_id
+                    elif str(current)!=target_device_id:errors.append({'step_id':step.step_id,'tool':step.preferred_tool,'error':'target_device_mismatch'})
+                if expected_connector and str(step.arguments.get('connector_id','')).lower()!=expected_connector:
+                    errors.append({'step_id':step.step_id,'tool':step.preferred_tool,'error':'target_connector_mismatch','expected_connector':expected_connector})
+            elif target_device_kind and expected_connector and step.preferred_tool in {'connector_read','connector_invoke'}:
+                if str(step.arguments.get('connector_id','')).lower()!=expected_connector:
+                    errors.append({'step_id':step.step_id,'tool':step.preferred_tool,'error':'target_connector_mismatch','expected_connector':expected_connector})
             error=self._schema_argument_error(step,schemas)
             if error:
                 errors.append({'step_id':step.step_id,'tool':step.preferred_tool,**error})
@@ -138,18 +174,24 @@ class PersonalAgent:
         self.traces.record('validation',step.preferred_tool,'BLOCKED',goal_id=goal.goal_id,task_run_id=run.task_run_id,trace_id=run.trace_id,correlation={'step_id':step.step_id},detail=error)
         self._persist(goal,plan,run)
         return self.report(goal,plan,run)
-    def start(self,request,*,user_id='user'):
+    def start(self,request,*,user_id='user',target_device_id=None,target_device_kind=None):
         if not isinstance(request,str) or not request.strip():raise ValueError('request is required')
         if not isinstance(user_id,str) or not user_id.strip() or len(user_id)>256:raise ValueError('user_id is invalid')
-        trace_id=uuid.uuid4().hex;goal=self._goal(request,user_id);self.store.save_goal(goal);self.store.event(goal.goal_id,'goal_created',{'user_id':user_id},now());self.traces.record('goal','personal_agent','CREATED',goal_id=goal.goal_id,trace_id=trace_id,correlation={'user_id':user_id})
+        trace_id=uuid.uuid4().hex;target_device_id=str(target_device_id).strip() if target_device_id else None;target_device_kind=str(target_device_kind).strip().lower() if target_device_kind else None
+        if target_device_id and len(target_device_id)>256:raise ValueError('target_device_id is invalid')
+        if target_device_kind and target_device_kind not in {'computer','linux','mobile'}:raise ValueError('target_device_kind is invalid')
+        goal=self._goal(request,user_id,target_device_id,target_device_kind);self.store.save_goal(goal);self.store.event(goal.goal_id,'goal_created',{'user_id':user_id,'target_device_kind':target_device_kind},now());self.traces.record('goal','personal_agent','CREATED',goal_id=goal.goal_id,trace_id=trace_id,correlation={'user_id':user_id})
         goal.status=GoalStatus.UNDERSTANDING;goal.updated_at=now();self.store.save_goal(goal)
-        context=self.gen1.retrieve_context(request,goal.context_requirements)
+        context=None
         if self.context_provider is not None:
             try:
-                try:richer=self.context_provider.gather(request,owner_user_id=goal.user_id)
+                try:richer=self.context_provider.gather(request,owner_user_id=goal.user_id,optimized=True)
                 except TypeError:richer=self.context_provider.gather(request)
                 context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}
-            except Exception as exc:self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
+            except Exception as exc:
+                self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())
+        if context is None:
+            context=self.gen1.retrieve_context(request,goal.context_requirements)
         if self.documents is not None:
             try:
                 docctx=self.documents.context(request,user_id=user_id,k=5,max_chars=5000)
@@ -168,7 +210,7 @@ class PersonalAgent:
             try:
                 proposal,provenance=self.planner.propose(goal,minimal,capabilities)
                 validator=PlanValidator(set(capabilities),self.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
-                self._validate_plan_arguments(plan,schemas)
+                self._validate_plan_arguments(plan,schemas,goal)
                 self.store.save_plan_proposal(proposal);self.store.save_provenance(goal.goal_id,provenance)
                 for permission,risk in decisions:self.store.save_permission(goal.goal_id,permission);self.store.save_risk(goal.goal_id,risk)
                 break
@@ -209,7 +251,7 @@ class PersonalAgent:
             except Exception as exc:self.store.event(goal.goal_id,'document_context_failed',{'error_type':type(exc).__name__},now())
         health=self._execution_health();capabilities=list(health.get('tools',[]));schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities};minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
         proposal,provenance=self.planner.propose(goal,minimal,capabilities);validator=PlanValidator(set(capabilities),self.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
-        self._validate_plan_arguments(plan,schemas)
+        self._validate_plan_arguments(plan,schemas,goal)
         self.store.save_plan_proposal(proposal);self.store.save_provenance(goal_id,provenance)
         for permission,risk in decisions:self.store.save_permission(goal_id,permission);self.store.save_risk(goal_id,risk)
         old_run.status='SUPERSEDED';old_run.updated_at=now();self.store.save_task_run(old_run);self.store.clear_criteria(goal_id)
@@ -603,6 +645,51 @@ class PersonalAgent:
                 item=output.get('automation',{});summaries.append(f"Automation {item.get('id')} is {('enabled' if item.get('enabled') else 'paused')} and its state was independently reread.")
             elif step.preferred_tool=='image_generate' and isinstance(output,dict):
                 summaries.append(f"Generated and independently verified {output.get('media_type','image')} artifact {output.get('artifact_id')} at {output.get('width')}×{output.get('height')} with SHA-256 {str(output.get('artifact_sha256',''))[:16]}….")
+            elif step.preferred_tool=='engineering_inspect' and isinstance(output,dict):
+                manifest=output.get('manifest',[])
+                paths=[str(item.get('path')) for item in manifest if isinstance(item,dict) and isinstance(item.get('path'),str) and item.get('path')!='source_code.zip']
+                important_order=[
+                    'README.md',
+                    'pyproject.toml',
+                    'src/sparkle_gen2/core.py',
+                    'src/sparkle_gen2/planner.py',
+                    'src/sparkle_gen2/gen1.py',
+                    'src/sparkle_gen2/cli.py',
+                    'src/sparkle_gen2/models.py',
+                    'src/sparkle_gen2/policy.py',
+                    'src/sparkle_gen2/environment_gateway.py',
+                    'src/sparkle_gen2/storage.py',
+                    'src/sparkle_gen2/retrieval.py',
+                    'src/sparkle_gen2/context_sources.py',
+                ]
+                important=[path for path in important_order if path in paths]
+                if not important:
+                    important=sorted(path for path in paths if path.startswith('src/sparkle_gen2/') and path.count('/')==2)[:12]
+                count=output.get('file_count')
+                digest=str(output.get('tree_sha256',''))
+                detail=f"Verified the current repository snapshot ({count} files"
+                if digest:
+                    detail+=f", tree SHA-256 {digest[:16]}…"
+                detail+=")."
+                if important:
+                    detail+=" Key Gen-2 files: "+", ".join(important)+"."
+                summaries.append(detail)
+
+            elif step.preferred_tool=='project_search' and isinstance(output,dict):
+                value=output.get('value')
+                if isinstance(value,list):
+                    if not value:
+                        summaries.append("No personal projects matched that search.")
+                    else:
+                        names=[]
+                        for item in value[:8]:
+                            if isinstance(item,dict):
+                                name=item.get('name') or item.get('project_name') or item.get('title') or item.get('id')
+                            else:
+                                name=item
+                            names.append(str(name))
+                        summaries.append(f"Found {len(value)} personal project match"+('' if len(value)==1 else 'es')+": "+", ".join(names)+".")
+
             elif step.preferred_tool=='document_ingest' and isinstance(output,dict):
                 summaries.append(f"Document {output.get('filename','document')} was locally extracted, structured, and independently reread with provenance.")
             elif step.preferred_tool=='document_search' and isinstance(output,dict):

@@ -33,9 +33,49 @@ def data_path()->Path:
     )
 
 
+def _default_engineering_root()->Path:
+    file_path=Path(__file__).resolve()
+
+    for candidate in (
+        file_path.parent,
+        *file_path.parents,
+    ):
+        if (
+            (candidate/'src'/'sparkle_gen2').is_dir()
+            and (candidate/'pyproject.toml').is_file()
+        ):
+            return candidate
+
+    cwd=Path.cwd().resolve()
+
+    if (cwd/'src'/'sparkle_gen2').is_dir():
+        return cwd
+
+    raise RuntimeError('gen2_engineering_root_not_configured')
+
+
 def build_components(*,activate_external_connectors=False):
     store=Gen2Store(data_path())
     base=LocalGen1Gateway()
+
+    engineering_root=Path(
+        os.environ.get(
+            'SPARKLE_GEN2_ENGINEERING_ROOT',
+            _default_engineering_root()
+        )
+    ).resolve()
+
+    engineering_db=Path(
+        os.environ.get(
+            'SPARKLE_GEN2_ENGINEERING_DB',
+            data_path().parent/'engineering.sqlite3'
+        )
+    ).resolve()
+
+    base.bind_engineering_workspace(
+        engineering_root,
+        engineering_db
+    )
     environment_config=Path(
         os.environ.get(
             'SPARKLE_GEN2_ENVIRONMENT_CONFIG',

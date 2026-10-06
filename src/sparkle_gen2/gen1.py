@@ -51,6 +51,26 @@ class LocalGen1Gateway:
             self._strict_workspace_worker=None
         from .model_manager import CapabilityRouter,ModelCapabilityManager
         self.model_manager=ModelCapabilityManager(registry=self.system.models,fallback_allowed=False);self.capability_router=CapabilityRouter(self.model_manager)
+
+    def bind_engineering_workspace(self,root,path):
+        from sparkle.engineering import RepositoryEngineeringService
+
+        root=Path(root).resolve()
+        path=Path(path).resolve()
+
+        if not (root / 'src' / 'sparkle_gen2').is_dir():
+            raise RuntimeError('gen2_engineering_root_invalid')
+
+        tool_registry=getattr(self.system,'tools',None)
+        tools=getattr(tool_registry,'_tools',None) if tool_registry is not None else None
+        tool=tools.get('engineering_inspect') if isinstance(tools,dict) else None
+
+        if tool is None or not hasattr(tool,'service'):
+            raise RuntimeError('engineering_inspect_unavailable')
+
+        tool.service=RepositoryEngineeringService(root=root,path=path)
+        return {'root':str(root),'path':str(path)}
+
     def health(self):
         models=[]
         for rid,record in self.system.models._records.items():
@@ -205,6 +225,19 @@ class LocalGen1Gateway:
             'use operations_snapshot with arguments {} unless the goal '
             'explicitly supplies an ISO calendar date. '
 
+            'For requests about the current repository, current codebase, '
+            'source tree, repository structure, important files, file identity, '
+            'implementation, tests, or a named local project such as SPARKLE-GEN2, '
+            'prefer engineering_inspect over project_search. '
+            'For repository structure or important-file listing, use '
+            'engineering_inspect with operation="snapshot" and no path. '
+            'For inspection of a known file, use engineering_inspect with '
+            'operation="file" and the exact known path. '
+            'Use file_read only when the user explicitly needs the contents of '
+            'a UTF-8 file and the exact path is known. '
+            'Use project_search for structured personal-project status such as '
+            'deadlines, milestones, blockers, priorities, or next actions. '
+
             'Dependencies must reference earlier or existing step IDs. '
             'Each step must request exactly one capability/tool. '
 
@@ -283,6 +316,34 @@ class LocalGen1Gateway:
                 raise RuntimeError(
                     'planner_derived_field_forbidden:preferred_tool'
                 )
+
+        criteria = raw.get('success_criteria')
+        if not isinstance(criteria, list) or not criteria:
+            raise RuntimeError('planner_success_criteria_invalid')
+
+        normalized_criteria = []
+        for criterion in criteria:
+            if not isinstance(criterion, dict):
+                raise RuntimeError('planner_goal_criterion_not_object')
+
+            if 'description' not in criterion or 'verification_method' not in criterion:
+                raise RuntimeError('planner_goal_criterion_missing_required_field')
+
+            description = criterion['description']
+            verification_method = criterion['verification_method']
+
+            if not isinstance(description, str) or not description.strip():
+                raise RuntimeError('planner_goal_criterion_invalid_description')
+
+            if not isinstance(verification_method, str) or not verification_method.strip():
+                raise RuntimeError('planner_goal_criterion_invalid_verification_method')
+
+            normalized_criteria.append({
+                'description': description.strip(),
+                'verification_method': verification_method.strip(),
+            })
+
+        raw['success_criteria'] = normalized_criteria
 
         prov={
             'request_id':response.provider_request_id or uuid.uuid4().hex,

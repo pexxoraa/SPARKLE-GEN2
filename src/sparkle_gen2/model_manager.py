@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import asdict,dataclass
 from pathlib import Path
 from typing import Any
+from time import monotonic
 
 
 def build_gen2_model_registry(*,path:Path|None=None,secrets=None):
@@ -60,6 +61,9 @@ class ModelCapabilityManager:
         if registry is None and config_path is not None:
             registry=build_gen2_model_registry(path=config_path)
         self.gen1=gen1;self.registry=registry or getattr(getattr(gen1,'system',None),'models',None);self.fallback_allowed=bool(fallback_allowed)
+        self._records_cache=None
+        self._records_cache_at=0.0
+        self._records_ttl=0.5
     @staticmethod
     def _validate_capabilities(values):
         if isinstance(values,str):values=[values]
@@ -93,8 +97,18 @@ class ModelCapabilityManager:
             caps=self._validate_capabilities(m['capabilities']) if 'capabilities' in m else tuple(x for x in m.get('roles',[]) if x in KNOWN_CAPABILITIES);inputs=self._validate_modalities(m.get('input_modalities',m.get('modalities',['text'])),'input_modalities');outputs=self._validate_modalities(m.get('output_modalities',['text']),'output_modalities');configured=bool(m.get('configured',m.get('enabled',False)));state=str(m.get('health','UNAVAILABLE'))
             out.append(ModelRecord(str(m.get('record_id') or m.get('id') or f'model-{i}'),str(m.get('provider','unknown')),str(m.get('model') or m.get('model_id') or 'unknown'),bool(m.get('enabled',False)),caps,inputs,outputs,bool(m.get('supports_tools',False) or 'tool_use' in caps),m.get('context_window'),m.get('max_output_tokens'),str(m.get('latency_class','balanced')),bool(m.get('allow_fallback',False)),configured,self._health_state(bool(m.get('enabled',False)),configured,state,m.get('health_reason')),m.get('health_reason'),{'active':bool(m.get('active',False))}))
         return out
-    def inventory(self):return [m.to_dict() for m in (self._from_registry() if self.registry is not None else self._from_gateway())]
-    def records(self):return self._from_registry() if self.registry is not None else self._from_gateway()
+    def inventory(self):return [m.to_dict() for m in self.records()]
+    def records(self):
+        stamp=monotonic()
+        if self._records_cache is not None and stamp-self._records_cache_at < self._records_ttl:
+            return list(self._records_cache)
+        records=self._from_registry() if self.registry is not None else self._from_gateway()
+        self._records_cache=list(records)
+        self._records_cache_at=stamp
+        return list(records)
+    def invalidate_records_cache(self):
+        self._records_cache=None
+        self._records_cache_at=0.0
     def eligible(self,capability,*,input_modalities=None,output_modalities=None,tools_required=False):
         required_caps=set(self._validate_capabilities([capability]));ins=set(self._validate_modalities(input_modalities or ['text'],'input_modalities'));outs=set(self._validate_modalities(output_modalities or ['text'],'output_modalities'))
         return [m.to_dict() for m in self.records() if m.enabled and m.configured and m.health not in {'UNAVAILABLE','BLOCKED'} and required_caps.issubset(m.capabilities) and ins.issubset(m.input_modalities) and outs.issubset(m.output_modalities) and (not tools_required or m.supports_tools)]
@@ -113,8 +127,8 @@ class ModelCapabilityManager:
         fallback=preferred_id is not None and selected.record_id!=preferred_id
         if fallback and (not self.fallback_allowed or not selected.fallback_eligible):return CapabilityRoute('BLOCKED',tuple(sorted(req)),tuple(sorted(ins)),tuple(sorted(outs)),None,'fallback disabled by product policy',False)
         return CapabilityRoute(selected.health,tuple(sorted(req)),tuple(sorted(ins)),tuple(sorted(outs)),selected,'configured capability route' if not fallback else 'approved fallback route',fallback)
-    def complete(self,request,requires,*,input_modalities=None,output_modalities=None,tools_required=False):
-        route=self.route(requires,input_modalities=input_modalities or getattr(request,'input_modalities',['text']),output_modalities=output_modalities or ['text'],tools_required=tools_required or bool(getattr(request,'tools',[])))
+    def complete(self,request,requires,*,input_modalities=None,output_modalities=None,tools_required=False,preferred_id=None):
+        route=self.route(requires,input_modalities=input_modalities or getattr(request,'input_modalities',['text']),output_modalities=output_modalities or ['text'],tools_required=tools_required or bool(getattr(request,'tools',[])),preferred_id=preferred_id)
         if route.selected is None:raise RuntimeError('model_capability_unavailable:'+','.join(route.required_capabilities))
         if self.registry is None:raise RuntimeError('model_registry_execution_unavailable')
         adapter=self.registry.adapter(route.selected.record_id)
@@ -122,9 +136,11 @@ class ModelCapabilityManager:
         except Exception as exc:
             try:self.registry.health.failure(route.selected.record_id,exc)
             except Exception:pass
+            self.invalidate_records_cache()
             raise
         try:self.registry.health.success(route.selected.record_id)
         except Exception:pass
+        self.invalidate_records_cache()
         return {'route':route.to_dict(),'response':response,'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capabilities':list(route.required_capabilities),'selection_reason':route.selection_reason,'fallback':route.fallback,'provider_request_id':getattr(response,'provider_request_id',None)}}
     def embed(self,texts,*,input_type='query'):
         route=self.route(['embedding'],input_modalities=['text'],output_modalities=['embedding'])
@@ -136,9 +152,11 @@ class ModelCapabilityManager:
         except Exception as exc:
             try:self.registry.health.failure(route.selected.record_id,exc)
             except Exception:pass
+            self.invalidate_records_cache()
             raise
         try:self.registry.health.success(route.selected.record_id)
         except Exception:pass
+        self.invalidate_records_cache()
         return {'vectors':vectors,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'embedding','input_type':input_type,'selection_reason':route.selection_reason,'fallback':route.fallback,'vector_count':len(vectors),'dimensions':len(vectors[0]) if vectors else 0}}
     def rerank(self,query,items):
         values=list(items)
@@ -152,9 +170,11 @@ class ModelCapabilityManager:
         except Exception as exc:
             try:self.registry.health.failure(route.selected.record_id,exc)
             except Exception:pass
+            self.invalidate_records_cache()
             raise
         try:self.registry.health.success(route.selected.record_id)
         except Exception:pass
+        self.invalidate_records_cache()
         ordered=[]
         for rank,row in enumerate(rankings,1):
             item=dict(values[row['index']]) if isinstance(values[row['index']],dict) else {'text':passages[row['index']]}
@@ -170,9 +190,11 @@ class ModelCapabilityManager:
         except Exception as exc:
             try:self.registry.health.failure(route.selected.record_id,exc)
             except Exception:pass
+            self.invalidate_records_cache()
             raise
         try:self.registry.health.success(route.selected.record_id)
         except Exception:pass
+        self.invalidate_records_cache()
         return {'result':result,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'image_generation','selection_reason':route.selection_reason,'fallback':route.fallback,'provider_request_id':result.get('provider_request_id'),'provider_status':result.get('provider_status')}}
 
     def voice_provider(self,provider=None):
@@ -187,7 +209,7 @@ class ModelCapabilityManager:
                     provider=None
             alias=normalize_voice_provider(provider)
             preferred_id=VOICE_PROVIDER_ALIASES.get(alias) if alias else self.registry.routing.get('voice')
-        route=self.route(['voice'],input_modalities=['audio'],output_modalities=['audio','text'],tools_required=True,preferred_id=preferred_id)
+        route=self.route(['voice'],input_modalities=['audio'],output_modalities=['audio','text'],tools_required=False,preferred_id=preferred_id)
         if route.selected is None:raise RuntimeError('model_capability_unavailable:voice')
         if self.registry is None:raise RuntimeError('model_registry_execution_unavailable')
         adapter=self.registry.adapter(route.selected.record_id)
@@ -203,17 +225,19 @@ class ModelCapabilityManager:
         except Exception as exc:
             try:self.registry.health.failure(route.selected.record_id,exc)
             except Exception:pass
+            self.invalidate_records_cache()
             raise
         try:self.registry.health.success(route.selected.record_id)
         except Exception:pass
+        self.invalidate_records_cache()
         return {'assessment':assessment,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'safety','selection_reason':route.selection_reason,'fallback':route.fallback,'provider_request_id':assessment.get('provider_request_id')}}
     def status(self,capability):
         outputs={'embedding':['embedding'],'reranking':['ranking'],'image_generation':['image'],'safety':['safety'],'voice':['audio','text']}.get(capability,['text']);inputs={'voice':['audio']}.get(capability,['text'])
         if capability=='voice':
             try:routed=self.voice_provider();route=CapabilityRoute(**{k:v for k,v in routed['route'].items() if k!='selected'},selected=ModelRecord(**routed['route']['selected']))
-            except Exception:route=self.route([capability],input_modalities=inputs,output_modalities=outputs,tools_required=True,preferred_id='__configured_voice_provider_unavailable__')
+            except Exception:route=self.route([capability],input_modalities=inputs,output_modalities=outputs,tools_required=False,preferred_id='__configured_voice_provider_unavailable__')
         else:route=self.route([capability],input_modalities=inputs,output_modalities=outputs)
-        health_state=(route.selected.health if route.selected is not None else ('BLOCKED' if route.status=='BLOCKED' else 'UNAVAILABLE'));return {'capability':capability,'status':'CONNECTED' if route.selected is not None else 'EXTERNALLY_BLOCKED','health_state':health_state,'route':route.to_dict(),'candidates':self.eligible(capability,output_modalities=outputs,tools_required=(capability=='voice')) if capability in KNOWN_CAPABILITIES else []}
+        health_state=(route.selected.health if route.selected is not None else ('BLOCKED' if route.status=='BLOCKED' else 'UNAVAILABLE'));return {'capability':capability,'status':'CONNECTED' if route.selected is not None else 'EXTERNALLY_BLOCKED','health_state':health_state,'route':route.to_dict(),'candidates':self.eligible(capability,output_modalities=outputs,tools_required=False) if capability in KNOWN_CAPABILITIES else []}
 
 class CapabilityRouter:
     """Capability-first facade; callers request semantics, never concrete model identities."""

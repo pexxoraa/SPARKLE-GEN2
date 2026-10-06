@@ -56,7 +56,7 @@ class Cycle38Tests(unittest.TestCase):
                 try:self.assertEqual(denied.exception.code,401)
                 finally:denied.exception.close()
                 with urllib.request.urlopen(base+'/',timeout=5) as r:html=r.read().decode();headers=dict(r.headers)
-                self.assertIn('What should we work on?',html);self.assertIn('Content-Security-Policy',headers)
+                self.assertIn('What should we move forward?',html);self.assertIn('Content-Security-Policy',headers)
             finally:server.shutdown();server.server_close()
     def test_web_enrollment_uses_httponly_cookie_and_scope_denial(self):
         with tempfile.TemporaryDirectory() as d:

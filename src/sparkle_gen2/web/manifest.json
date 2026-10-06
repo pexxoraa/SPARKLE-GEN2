@@ -1,11 +1,11 @@
 {
-  "name": "SPARKLE Personal AI",
+  "name": "SPARKLE Personal AI OS",
   "short_name": "SPARKLE",
-  "description": "Private cross-device personal AI workspace",
+  "description": "Private cross-device personal AI operating system",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#070b14",
-  "theme_color": "#090d18",
+  "background_color": "#05070b",
+  "theme_color": "#05070b",
   "orientation": "any",
   "categories": [
     "productivity",

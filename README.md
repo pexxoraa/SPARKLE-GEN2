@@ -15,7 +15,7 @@ Model output is only a proposal. It cannot grant permission, approve actions, ex
 The graphical PWA is now the primary experience. Start the private Personal Core on loopback:
 
 ```bash
-export PYTHONPATH=/home/prem-macharla/SPARKLE-GEN2/src:/home/prem-macharla/SPARKLE-level3-git/src
+export PYTHONPATH=/home/prem-macharla/SPARKLE-GEN2/src
 python -m sparkle_gen2.personal_core
 ```
 

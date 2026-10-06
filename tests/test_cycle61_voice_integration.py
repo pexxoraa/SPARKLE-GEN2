@@ -95,8 +95,10 @@ class Cycle61VoiceTests(unittest.TestCase):
     def test_provider_failure_malformed_events_and_malformed_audio_fail_session(self):
         with tempfile.TemporaryDirectory() as d:
             store=Gen2Store(Path(d)/'g.db');svc=VoiceSessionService(store,provider=SessionAwareTransport(fail_send=True));s=svc.create();svc.connect(s.session_id)
-            with self.assertRaises(TimeoutError):svc.push(VoiceInputFrame(s.session_id,0,b'\x00\x00',now()))
-            self.assertEqual(store.load_voice_session(s.session_id).state,'FAILED')
+            result=svc.push(VoiceInputFrame(s.session_id,0,b'\x00\x00',now()))
+            self.assertTrue(result.agent_result['voice_retry'])
+            self.assertEqual(result.state,VoiceSessionState.CONNECTED.value)
+            self.assertEqual(store.load_voice_session(s.session_id).state,'CONNECTED')
         with tempfile.TemporaryDirectory() as d:
             store=Gen2Store(Path(d)/'g.db')
             class Bad(SessionAwareTransport):

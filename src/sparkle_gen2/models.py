@@ -24,6 +24,7 @@ class Goal:
     success_criteria:list[str]=field(default_factory=list); risk_level:str='LOW'
     context_requirements:list[str]=field(default_factory=list); status:GoalStatus=GoalStatus.CREATED
     plan_id:str|None=None; parent_goal_id:str|None=None; created_at:str=''; updated_at:str=''; user_id:str='user'
+    metadata:dict[str,Any]=field(default_factory=dict)
     def to_dict(self):
         d=asdict(self); d['status']=self.status.value; return d
 

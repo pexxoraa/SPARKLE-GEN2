@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 .acceptance/
 .env
+build/
+dist/
+*.egg-info/

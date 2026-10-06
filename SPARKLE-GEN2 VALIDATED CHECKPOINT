@@ -1,0 +1,679 @@
+[1mdiff --git a/.gitignore b/.gitignore[m
+[1mindex 744eb0f..624925f 100644[m
+[1m--- a/.gitignore[m
+[1m+++ b/.gitignore[m
+[36m@@ -5,3 +5,6 @@[m [m__pycache__/[m
+ .pytest_cache/[m
+ .acceptance/[m
+ .env[m
+[32m+[m[32mbuild/[m
+[32m+[m[32mdist/[m
+[32m+[m[32m*.egg-info/[m
+[1mdiff --git a/README.md b/README.md[m
+[1mindex bbfc251..dd49224 100644[m
+[1m--- a/README.md[m
+[1m+++ b/README.md[m
+[36m@@ -15,7 +15,7 @@[m [mModel output is only a proposal. It cannot grant permission, approve actions, ex[m
+ The graphical PWA is now the primary experience. Start the private Personal Core on loopback:[m
+ [m
+ ```bash[m
+[31m-export PYTHONPATH=/home/prem-macharla/SPARKLE-GEN2/src:/home/prem-macharla/SPARKLE-level3-git/src[m
+[32m+[m[32mexport PYTHONPATH=/home/prem-macharla/SPARKLE-GEN2/src[m
+ python -m sparkle_gen2.personal_core[m
+ ```[m
+ [m
+[1mdiff --git a/src/sparkle_gen2/cli.py b/src/sparkle_gen2/cli.py[m
+[1mindex f5b3fa3..0b86868 100644[m
+[1m--- a/src/sparkle_gen2/cli.py[m
+[1m+++ b/src/sparkle_gen2/cli.py[m
+[36m@@ -36,6 +36,25 @@[m [mdef data_path()->Path:[m
+ def build_components(*,activate_external_connectors=False):[m
+     store=Gen2Store(data_path())[m
+     base=LocalGen1Gateway()[m
+[32m+[m
+[32m+[m[32m    engineering_root=Path([m
+[32m+[m[32m        os.environ.get([m
+[32m+[m[32m            'SPARKLE_GEN2_ENGINEERING_ROOT',[m
+[32m+[m[32m            Path.cwd()[m
+[32m+[m[32m        )[m
+[32m+[m[32m    ).resolve()[m
+[32m+[m
+[32m+[m[32m    engineering_db=Path([m
+[32m+[m[32m        os.environ.get([m
+[32m+[m[32m            'SPARKLE_GEN2_ENGINEERING_DB',[m
+[32m+[m[32m            data_path().parent/'engineering.sqlite3'[m
+[32m+[m[32m        )[m
+[32m+[m[32m    ).resolve()[m
+[32m+[m
+[32m+[m[32m    base.bind_engineering_workspace([m
+[32m+[m[32m        engineering_root,[m
+[32m+[m[32m        engineering_db[m
+[32m+[m[32m    )[m
+     environment_config=Path([m
+         os.environ.get([m
+             'SPARKLE_GEN2_ENVIRONMENT_CONFIG',[m
+[1mdiff --git a/src/sparkle_gen2/context_sources.py b/src/sparkle_gen2/context_sources.py[m
+[1mindex 2cf5f8d..499d80e 100644[m
+[1m--- a/src/sparkle_gen2/context_sources.py[m
+[1m+++ b/src/sparkle_gen2/context_sources.py[m
+[36m@@ -1,4 +1,6 @@[m
+ from __future__ import annotations[m
+[32m+[m
+[32m+[m[32mimport re[m
+ from .context_engine import ContextItem,PersonalContextEngine[m
+ [m
+ class PersonalContextAssembler:[m
+[36m@@ -7,9 +9,69 @@[m [mclass PersonalContextAssembler:[m
+         self.engine=engine or PersonalContextEngine();self.personal_data=personal_data;self.connectors=connectors;self.store=store;self.devices=devices;self.world=world;self.semantic_index=semantic_index[m
+     def _item(self,source,key,value,provenance=None,freshness=1.0,relevance=1.0):[m
+         return ContextItem(source,key,str(value),freshness,relevance,'ALLOW',dict(provenance or {}))[m
+[31m-    def gather(self,goal,*,owner_user_id='user'):[m
+[32m+[m
+[32m+[m[32m    @staticmethod[m
+[32m+[m[32m    def _goal_text(goal):[m
+[32m+[m[32m        return ' '.join(str(goal).lower().split())[m
+[32m+[m
+[32m+[m[32m    @classmethod[m
+[32m+[m[32m    def _needs_email(cls,goal):[m
+[32m+[m[32m        text=cls._goal_text(goal)[m
+[32m+[m[32m        return any(token in text for token in ([m
+[32m+[m[32m            'email','emails','mail','mailbox','inbox','outlook',[m
+[32m+[m[32m            'gmail','message','messages'[m
+[32m+[m[32m        ))[m
+[32m+[m
+[32m+[m[32m    @classmethod[m
+[32m+[m[32m    def _needs_files(cls,goal):[m
+[32m+[m[32m        text=cls._goal_text(goal)[m
+[32m+[m[32m        return any(token in text for token in ([m
+[32m+[m[32m            'file','files','document','documents','pdf','spreadsheet',[m
+[32m+[m[32m            'csv','attachment','folder','directory','workspace',[m
+[32m+[m[32m            'source code','codebase','script','python file'[m
+[32m+[m[32m        ))[m
+[32m+[m
+[32m+[m[32m    @classmethod[m
+[32m+[m[32m    def _needs_semantic(cls,goal):[m
+[32m+[m[32m        text=cls._goal_text(goal)[m
+[32m+[m[32m        words=set(re.findall(r'[a-z0-9_]+',text))[m
+[32m+[m[32m        if words & {[m
+[32m+[m[32m            'my','mine','our','memory','remember','preference','preferences',[m
+[32m+[m[32m            'project','projects','task','tasks','research','learning','course',[m
+[32m+[m[32m            'goal','goals','decision','decisions','document','documents',[m
+[32m+[m[32m            'file','files','email','emails','calendar','meeting','meetings',[m
+[32m+[m[32m            'schedule','github','repository','repo','robot','robotics',[m
+[32m+[m[32m            'device','devices','today','tomorrow','recent','latest'[m
+[32m+[m[32m        }:[m
+[32m+[m[32m            return True[m
+[32m+[m
+[32m+[m[32m        return any([m
+[32m+[m[32m            re.search(rf'\b{re.escape(phrase)}\b', text)[m
+[32m+[m[32m            for phrase in ([m
+[32m+[m[32m                'what i',[m
+[32m+[m[32m                'what do i',[m
+[32m+[m[32m                'who am i',[m
+[32m+[m[32m                'my history',[m
+[32m+[m[32m                'my preferences',[m
+[32m+[m[32m                'my memory',[m
+[32m+[m[32m                'source code',[m
+[32m+[m[32m                'codebase',[m
+[32m+[m[32m            )[m
+[32m+[m[32m        )[m
+[32m+[m[32m    @classmethod[m
+[32m+[m[32m    def _needs_personal_data(cls,goal):[m
+[32m+[m[32m        text=cls._goal_text(goal)[m
+[32m+[m[32m        return any(token in text.split() for token in ([m
+[32m+[m[32m            'my','mine','our','personal','remember','memory',[m
+[32m+[m[32m            'preference','preferences','project','projects',[m
+[32m+[m[32m            'task','tasks','research','learning','course',[m
+[32m+[m[32m            'goal','goals','decision','decisions','profile',[m
+[32m+[m[32m            'history','previous','past'[m
+[32m+[m[32m        ))[m
+[32m+[m
+[32m+[m[32m    def gather(self,goal,*,owner_user_id='user',optimized=False):[m
+         sources={}[m
+[31m-        if self.personal_data is not None:[m
+[32m+[m[32m        if self.personal_data is not None and (not optimized or self._needs_personal_data(goal)):[m
+             for source in ('memory','knowledge','projects','tasks','learning','research'):[m
+                 try:r=self.personal_data.retrieve(source,goal,limit=5);sources.setdefault(source,[]).append(self._item(source,source,r.get('output'),{'tool':r.get('tool'),'verification':r.get('verification')}))[m
+                 except Exception:pass[m
+[36m@@ -17,13 +79,28 @@[m [mclass PersonalContextAssembler:[m
+                 r=self.personal_data.retrieve('memory',goal,limit=5);sources.setdefault('preferences',[]).append(self._item('preferences','preferences',r.get('output'),{'tool':r.get('tool'),'semantic':'preferences'}))[m
+             except Exception:pass[m
+         if self.connectors is not None:[m
+[31m-            for name,scope in (('outlook','outlook.read'),('files','files.read')):[m
+[31m-                try:[m
+[31m-                    h=self.connectors.health(name,owner_user_id=owner_user_id)[m
+[31m-                    if h.get('status') not in {'CONNECTED','HEALTHY'}:continue[m
+[31m-                    op='search' if name in {'outlook','files'} else 'list';r=self.connectors.invoke(name,op,{'query':goal},scope,owner_user_id=owner_user_id);item=self._item(name,name,r.get('result'),{'connector':name});sources.setdefault(name,[]).append(item)[m
+[31m-                    if name=='outlook':sources.setdefault('email',[]).append(self._item('email',name,r.get('result'),{'connector':name}))[m
+[31m-                except Exception:pass[m
+[32m+[m[32m            if not optimized:[m
+[32m+[m[32m                for name,scope in (('outlook','outlook.read'),('files','files.read')):[m
+[32m+[m[32m                    try:[m
+[32m+[m[32m                        h=self.connectors.health(name,owner_user_id=owner_user_id)[m
+[32m+[m[32m                        if h.get('status') not in {'CONNECTED','HEALTHY'}:continue[m
+[32m+[m[32m                        op='search' if name in {'outlook','files'} else 'list';r=self.connectors.invoke(name,op,{'query':goal},scope,owner_user_id=owner_user_id);item=self._item(name,name,r.get('result'),{'connector':name});sources.setdefault(name,[]).append(item)[m
+[32m+[m[32m                        if name=='outlook':sources.setdefault('email',[]).append(self._item('email',name,r.get('result'),{'connector':'outlook'}))[m
+[32m+[m[32m                    except Exception:pass[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                if self._needs_email(goal):[m
+[32m+[m[32m                    try:[m
+[32m+[m[32m                        h=self.connectors.health('outlook',owner_user_id=owner_user_id)[m
+[32m+[m[32m                        if h.get('status') in {'CONNECTED','HEALTHY'}:[m
+[32m+[m[32m                            r=self.connectors.invoke('outlook','search',{'query':goal},'outlook.read',owner_user_id=owner_user_id);item=self._item('outlook','outlook',r.get('result'),{'connector':'outlook'});sources.setdefault('outlook',[]).append(item);sources.setdefault('email',[]).append(self._item('email','outlook',r.get('result'),{'connector':'outlook'}))[m
+[32m+[m[32m                    except Exception:pass[m
+[32m+[m
+[32m+[m[32m                if self._needs_files(goal):[m
+[32m+[m[32m                    try:[m
+[32m+[m[32m                        h=self.connectors.health('files',owner_user_id=owner_user_id)[m
+[32m+[m[32m                        if h.get('status') in {'CONNECTED','HEALTHY'}:[m
+[32m+[m[32m                            r=self.connectors.invoke('files','search',{'query':goal},'files.read',owner_user_id=owner_user_id);item=self._item('files','files',r.get('result'),{'connector':'files'});sources.setdefault('files',[]).append(item)[m
+[32m+[m[32m                    except Exception:pass[m
+             try:[m
+                 calendar_ops={x.get('operation') for x in self.connectors.capabilities('calendar')}[m
+             except Exception:calendar_ops=set()[m
+[36m@@ -92,7 +169,7 @@[m [mclass PersonalContextAssembler:[m
+                 except Exception:detail={'status':'UNAVAILABLE','verified':False}[m
+                 items.append(self._item('devices',d['device_id'],{'record':d,'health':detail},{'device_id':d['device_id']}))[m
+             if items:sources['devices']=items[m
+[31m-        if self.semantic_index is not None:[m
+[32m+[m[32m        if self.semantic_index is not None and (not optimized or self._needs_semantic(goal)):[m
+             try:sources['semantic']=self.semantic_index.context_items(goal,k=5)[m
+             except Exception:pass[m
+         if self.world is not None:[m
+[1mdiff --git a/src/sparkle_gen2/core.py b/src/sparkle_gen2/core.py[m
+[1mindex e6a567d..a0d6f06 100644[m
+[1m--- a/src/sparkle_gen2/core.py[m
+[1m+++ b/src/sparkle_gen2/core.py[m
+[36m@@ -1,5 +1,6 @@[m
+ from __future__ import annotations[m
+ import json,uuid[m
+[32m+[m[32mfrom time import monotonic[m
+ from datetime import UTC,datetime,timedelta[m
+ from typing import Any[m
+ from .core_time import now[m
+[36m@@ -23,11 +24,21 @@[m [mclass PersonalAgent:[m
+         if not 0<=planner_retries<=2:raise ValueError('planner_retries out of range')[m
+         if not 0<=max_replans<=3:raise ValueError('max_replans out of range')[m
+         self.store=store;self.gen1=gen1;self.planner=planner or Gen1PlannerModel(gen1);self.policy=policy or PolicyEngine();self.context_provider=context_provider;self.connectors=connector_manager;self.documents=document_service;self.images=image_service;self.perception=perception_service;self.daily_os=daily_os_service;self.operations=operations_service;self.notifications=notification_service;self.notification_delivery=getattr(notification_service,'delivery',None);self.learning=learning_service;self.traces=tracer or TraceRecorder(store);self.memory=MemoryCandidateService(store,gen1,self.policy);self.delegation=SpecialistDelegationService(store,gen1,self.policy);self.failures=FailureClassifier();self.max_iterations=max_iterations;self.planner_retries=planner_retries;self.max_replans=max_replans[m
+[32m+[m[32m        self._execution_health_cache=None[m
+[32m+[m[32m        self._execution_health_cache_at=0.0[m
+[32m+[m[32m        self._execution_health_ttl=5.0[m
+         self.automation=AutomationOrchestrator(store,gen1,lambda:self) if AutomationOrchestrator.available(gen1) else None[m
+     def _goal(self,request,user_id='user'):[m
+         stamp=now();return Goal(uuid.uuid4().hex,request.strip(),' '.join(request.strip().split()),success_criteria=[],context_requirements=['relevant Gen-1 context'],created_at=stamp,updated_at=stamp,status=GoalStatus.CREATED,user_id=user_id)[m
+     def _execution_health(self):[m
+[31m-        base=dict(self.gen1.health());tools=list(base.get('tools',[]));definitions=list(base.get('tool_definitions',[]))[m
+[32m+[m[32m        stamp=monotonic()[m
+[32m+[m[32m        if self._execution_health_cache is not None and stamp-self._execution_health_cache_at < self._execution_health_ttl:[m
+[32m+[m[32m            base=dict(self._execution_health_cache)[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            base=dict(self.gen1.health())[m
+[32m+[m[32m            self._execution_health_cache=dict(base)[m
+[32m+[m[32m            self._execution_health_cache_at=stamp[m
+[32m+[m[32m        tools=list(base.get('tools',[]));definitions=list(base.get('tool_definitions',[]))[m
+         if self.delegation.available() and 'specialist_delegate' not in tools:[m
+             tools.append('specialist_delegate');definitions.append({'name':'specialist_delegate','description':'Delegate bounded read-only analysis to certified Gen-1 specialists. Specialists are explicit, unique, allowlisted, and retain Gen-1 tool restrictions.','parameters':{'type':'object','properties':{'specialists':{'type':'array','items':{'type':'string'},'minItems':1},'objective':{'type':'string'},'inputs':{'type':'object'},'constraints':{'type':'array','items':{'type':'string'}},'required_evidence':{'type':'array','items':{'type':'string'}},'authorized_action':{'type':'object','properties':{'tool':{'type':'string'},'arguments':{'type':'object'}},'required':['tool','arguments'],'additionalProperties':False}},'required':['specialists','objective'],'additionalProperties':False}})[m
+         if self.notifications is not None:[m
+[36m@@ -91,6 +102,10 @@[m [mclass PersonalAgent:[m
+             for d in auto_defs:[m
+                 if d['name'] not in tools:tools.append(d['name']);definitions.append(d)[m
+         base['tools']=sorted(set(tools));base['tool_definitions']=definitions;return base[m
+[32m+[m[32m    def invalidate_execution_health_cache(self):[m
+[32m+[m[32m        self._execution_health_cache=None[m
+[32m+[m[32m        self._execution_health_cache_at=0.0[m
+[32m+[m
+     @staticmethod[m
+     def _schema_argument_error(step,schemas):[m
+         """Return a deterministic argument-validation error, or None."""[m
+[36m@@ -143,13 +158,16 @@[m [mclass PersonalAgent:[m
+         if not isinstance(user_id,str) or not user_id.strip() or len(user_id)>256:raise ValueError('user_id is invalid')[m
+         trace_id=uuid.uuid4().hex;goal=self._goal(request,user_id);self.store.save_goal(goal);self.store.event(goal.goal_id,'goal_created',{'user_id':user_id},now());self.traces.record('goal','personal_agent','CREATED',goal_id=goal.goal_id,trace_id=trace_id,correlation={'user_id':user_id})[m
+         goal.status=GoalStatus.UNDERSTANDING;goal.updated_at=now();self.store.save_goal(goal)[m
+[31m-        context=self.gen1.retrieve_context(request,goal.context_requirements)[m
+[32m+[m[32m        context=None[m
+         if self.context_provider is not None:[m
+             try:[m
+[31m-                try:richer=self.context_provider.gather(request,owner_user_id=goal.user_id)[m
+[32m+[m[32m                try:richer=self.context_provider.gather(request,owner_user_id=goal.user_id,optimized=True)[m
+                 except TypeError:richer=self.context_provider.gather(request)[m
+                 context={'source':'gen2-personal-context','rendered':str(richer.get('items',[]))[:6000],'item_count':richer.get('item_count',0)}[m
+[31m-            except Exception as exc:self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())[m
+[32m+[m[32m            except Exception as exc:[m
+[32m+[m[32m                self.store.event(goal.goal_id,'context_provider_failed',{'error_type':type(exc).__name__},now())[m
+[32m+[m[32m        if context is None:[m
+[32m+[m[32m            context=self.gen1.retrieve_context(request,goal.context_requirements)[m
+         if self.documents is not None:[m
+             try:[m
+                 docctx=self.documents.context(request,user_id=user_id,k=5,max_chars=5000)[m
+[36m@@ -603,6 +621,51 @@[m [mclass PersonalAgent:[m
+                 item=output.get('automation',{});summaries.append(f"Automation {item.get('id')} is {('enabled' if item.get('enabled') else 'paused')} and its state was independently reread.")[m
+             elif step.preferred_tool=='image_generate' and isinstance(output,dict):[m
+                 summaries.append(f"Generated and independently verified {output.get('media_type','image')} artifact {output.get('artifact_id')} at {output.get('width')}×{output.get('height')} with SHA-256 {str(output.get('artifact_sha256',''))[:16]}….")[m
+[32m+[m[32m            elif step.preferred_tool=='engineering_inspect' and isinstance(output,dict):[m
+[32m+[m[32m                manifest=output.get('manifest',[])[m
+[32m+[m[32m                paths=[str(item.get('path')) for item in manifest if isinstance(item,dict) and isinstance(item.get('path'),str) and item.get('path')!='source_code.zip'][m
+[32m+[m[32m                important_order=[[m
+[32m+[m[32m                    'README.md',[m
+[32m+[m[32m                    'pyproject.toml',[m
+[32m+[m[32m                    'src/sparkle_gen2/core.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/planner.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/gen1.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/cli.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/models.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/policy.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/environment_gateway.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/storage.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/retrieval.py',[m
+[32m+[m[32m                    'src/sparkle_gen2/context_sources.py',[m
+[32m+[m[32m                ][m
+[32m+[m[32m                important=[path for path in important_order if path in paths][m
+[32m+[m[32m                if not important:[m
+[32m+[m[32m                    important=sorted(path for path in paths if path.startswith('src/sparkle_gen2/') and path.count('/')==2)[:12][m
+[32m+[m[32m                count=output.get('file_count')[m
+[32m+[m[32m                digest=str(output.get('tree_sha256',''))[m
+[32m+[m[32m                detail=f"Verified the current repository snapshot ({count} files"[m
+[32m+[m[32m                if digest:[m
+[32m+[m[32m                    detail+=f", tree SHA-256 {digest[:16]}…"[m
+[32m+[m[32m                detail+=")."[m
+[32m+[m[32m                if important:[m
+[32m+[m[32m                    detail+=" Key Gen-2 files: "+", ".join(important)+"."[m
+[32m+[m[32m                summaries.append(detail)[m
+[32m+[m
+[32m+[m[32m            elif step.preferred_tool=='project_search' and isinstance(output,dict):[m
+[32m+[m[32m                value=output.get('value')[m
+[32m+[m[32m                if isinstance(value,list):[m
+[32m+[m[32m                    if not value:[m
+[32m+[m[32m                        summaries.append("No personal projects matched that search.")[m
+[32m+[m[32m                    else:[m
+[32m+[m[32m                        names=[][m
+[32m+[m[32m                        for item in value[:8]:[m
+[32m+[m[32m                            if isinstance(item,dict):[m
+[32m+[m[32m                                name=item.get('name') or item.get('project_name') or item.get('title') or item.get('id')[m
+[32m+[m[32m                            else:[m
+[32m+[m[32m                                name=item[m
+[32m+[m[32m                            names.append(str(name))[m
+[32m+[m[32m                        summaries.append(f"Found {len(value)} personal project match"+('' if len(value)==1 else 'es')+": "+", ".join(names)+".")[m
+[32m+[m
+             elif step.preferred_tool=='document_ingest' and isinstance(output,dict):[m
+                 summaries.append(f"Document {output.get('filename','document')} was locally extracted, structured, and independently reread with provenance.")[m
+             elif step.preferred_tool=='document_search' and isinstance(output,dict):[m
+[1mdiff --git a/src/sparkle_gen2/gen1.py b/src/sparkle_gen2/gen1.py[m
+[1mindex d62efe8..23a0209 100644[m
+[1m--- a/src/sparkle_gen2/gen1.py[m
+[1m+++ b/src/sparkle_gen2/gen1.py[m
+[36m@@ -51,6 +51,26 @@[m [mclass LocalGen1Gateway:[m
+             self._strict_workspace_worker=None[m
+         from .model_manager import CapabilityRouter,ModelCapabilityManager[m
+         self.model_manager=ModelCapabilityManager(registry=self.system.models,fallback_allowed=False);self.capability_router=CapabilityRouter(self.model_manager)[m
+[32m+[m
+[32m+[m[32m    def bind_engineering_workspace(self,root,path):[m
+[32m+[m[32m        from sparkle.engineering import RepositoryEngineeringService[m
+[32m+[m
+[32m+[m[32m        root=Path(root).resolve()[m
+[32m+[m[32m        path=Path(path).resolve()[m
+[32m+[m
+[32m+[m[32m        if not (root / 'src' / 'sparkle_gen2').is_dir():[m
+[32m+[m[32m            raise RuntimeError('gen2_engineering_root_invalid')[m
+[32m+[m
+[32m+[m[32m        tool_registry=getattr(self.system,'tools',None)[m
+[32m+[m[32m        tools=getattr(tool_registry,'_tools',None) if tool_registry is not None else None[m
+[32m+[m[32m        tool=tools.get('engineering_inspect') if isinstance(tools,dict) else None[m
+[32m+[m
+[32m+[m[32m        if tool is None or not hasattr(tool,'service'):[m
+[32m+[m[32m            raise RuntimeError('engineering_inspect_unavailable')[m
+[32m+[m
+[32m+[m[32m        tool.service=RepositoryEngineeringService(root=root,path=path)[m
+[32m+[m[32m        return {'root':str(root),'path':str(path)}[m
+[32m+[m
+     def health(self):[m
+         models=[][m
+         for rid,record in self.system.models._records.items():[m
+[36m@@ -205,6 +225,19 @@[m [mclass LocalGen1Gateway:[m
+             'use operations_snapshot with arguments {} unless the goal '[m
+             'explicitly supplies an ISO calendar date. '[m
+ [m
+[32m+[m[32m            'For requests about the current repository, current codebase, '[m
+[32m+[m[32m            'source tree, repository structure, important files, file identity, '[m
+[32m+[m[32m            'implementation, tests, or a named local project such as SPARKLE-GEN2, '[m
+[32m+[m[32m            'prefer engineering_inspect over project_search. '[m
+[32m+[m[32m            'For repository structure or important-file listing, use '[m
+[32m+[m[32m            'engineering_inspect with operation="snapshot" and no path. '[m
+[32m+[m[32m            'For inspection of a known file, use engineering_inspect with '[m
+[32m+[m[32m            'operation="file" and the exact known path. '[m
+[32m+[m[32m            'Use file_read only when the user explicitly needs the contents of '[m
+[32m+[m[32m            'a UTF-8 file and the exact path is known. '[m
+[32m+[m[32m            'Use project_search for structured personal-project status such as '[m
+[32m+[m[32m            'deadlines, milestones, blockers, priorities, or next actions. '[m
+[32m+[m
+             'Dependencies must reference earlier or existing step IDs. '[m
+             'Each step must request exactly one capability/tool. '[m
+ [m
+[36m@@ -284,6 +317,34 @@[m [mclass LocalGen1Gateway:[m
+                     'planner_derived_field_forbidden:preferred_tool'[m
+                 )[m
+ [m
+[32m+[m[32m        criteria = raw.get('success_criteria')[m
+[32m+[m[32m        if not isinstance(criteria, list) or not criteria:[m
+[32m+[m[32m            raise RuntimeError('planner_success_criteria_invalid')[m
+[32m+[m
+[32m+[m[32m        normalized_criteria = [][m
+[32m+[m[32m        for criterion in criteria:[m
+[32m+[m[32m            if not isinstance(criterion, dict):[m
+[32m+[m[32m                raise RuntimeError('planner_goal_criterion_not_object')[m
+[32m+[m
+[32m+[m[32m            if 'description' not in criterion or 'verification_method' not in criterion:[m
+[32m+[m[32m                raise RuntimeError('planner_goal_criterion_missing_required_field')[m
+[32m+[m
+[32m+[m[32m            description = criterion['description'][m
+[32m+[m[32m            verification_method = criterion['verification_method'][m
+[32m+[m
+[32m+[m[32m            if not isinstance(description, str) or not description.strip():[m
+[32m+[m[32m                raise RuntimeError('planner_goal_criterion_invalid_description')[m
+[32m+[m
+[32m+[m[32m            if not isinstance(verification_method, str) or not verification_method.strip():[m
+[32m+[m[32m                raise RuntimeError('planner_goal_criterion_invalid_verification_method')[m
+[32m+[m
+[32m+[m[32m            normalized_criteria.append({[m
+[32m+[m[32m                'description': description.strip(),[m
+[32m+[m[32m                'verification_method': verification_method.strip(),[m
+[32m+[m[32m            })[m
+[32m+[m
+[32m+[m[32m        raw['success_criteria'] = normalized_criteria[m
+[32m+[m
+         prov={[m
+             'request_id':response.provider_request_id or uuid.uuid4().hex,[m
+             'provider':decision.provider,[m
+[1mdiff --git a/src/sparkle_gen2/model_manager.py b/src/sparkle_gen2/model_manager.py[m
+[1mindex acab9aa..2cfeb70 100644[m
+[1m--- a/src/sparkle_gen2/model_manager.py[m
+[1m+++ b/src/sparkle_gen2/model_manager.py[m
+[36m@@ -2,6 +2,7 @@[m [mfrom __future__ import annotations[m
+ from dataclasses import asdict,dataclass[m
+ from pathlib import Path[m
+ from typing import Any[m
+[32m+[m[32mfrom time import monotonic[m
+ [m
+ [m
+ def build_gen2_model_registry(*,path:Path|None=None,secrets=None):[m
+[36m@@ -60,6 +61,9 @@[m [mclass ModelCapabilityManager:[m
+         if registry is None and config_path is not None:[m
+             registry=build_gen2_model_registry(path=config_path)[m
+         self.gen1=gen1;self.registry=registry or getattr(getattr(gen1,'system',None),'models',None);self.fallback_allowed=bool(fallback_allowed)[m
+[32m+[m[32m        self._records_cache=None[m
+[32m+[m[32m        self._records_cache_at=0.0[m
+[32m+[m[32m        self._records_ttl=0.5[m
+     @staticmethod[m
+     def _validate_capabilities(values):[m
+         if isinstance(values,str):values=[values][m
+[36m@@ -93,8 +97,18 @@[m [mclass ModelCapabilityManager:[m
+             caps=self._validate_capabilities(m['capabilities']) if 'capabilities' in m else tuple(x for x in m.get('roles',[]) if x in KNOWN_CAPABILITIES);inputs=self._validate_modalities(m.get('input_modalities',m.get('modalities',['text'])),'input_modalities');outputs=self._validate_modalities(m.get('output_modalities',['text']),'output_modalities');configured=bool(m.get('configured',m.get('enabled',False)));state=str(m.get('health','UNAVAILABLE'))[m
+             out.append(ModelRecord(str(m.get('record_id') or m.get('id') or f'model-{i}'),str(m.get('provider','unknown')),str(m.get('model') or m.get('model_id') or 'unknown'),bool(m.get('enabled',False)),caps,inputs,outputs,bool(m.get('supports_tools',False) or 'tool_use' in caps),m.get('context_window'),m.get('max_output_tokens'),str(m.get('latency_class','balanced')),bool(m.get('allow_fallback',False)),configured,self._health_state(bool(m.get('enabled',False)),configured,state,m.get('health_reason')),m.get('health_reason'),{'active':bool(m.get('active',False))}))[m
+         return out[m
+[31m-    def inventory(self):return [m.to_dict() for m in (self._from_registry() if self.registry is not None else self._from_gateway())][m
+[31m-    def records(self):return self._from_registry() if self.registry is not None else self._from_gateway()[m
+[32m+[m[32m    def inventory(self):return [m.to_dict() for m in self.records()][m
+[32m+[m[32m    def records(self):[m
+[32m+[m[32m        stamp=monotonic()[m
+[32m+[m[32m        if self._records_cache is not None and stamp-self._records_cache_at < self._records_ttl:[m
+[32m+[m[32m            return list(self._records_cache)[m
+[32m+[m[32m        records=self._from_registry() if self.registry is not None else self._from_gateway()[m
+[32m+[m[32m        self._records_cache=list(records)[m
+[32m+[m[32m        self._records_cache_at=stamp[m
+[32m+[m[32m        return list(records)[m
+[32m+[m[32m    def invalidate_records_cache(self):[m
+[32m+[m[32m        self._records_cache=None[m
+[32m+[m[32m        self._records_cache_at=0.0[m
+     def eligible(self,capability,*,input_modalities=None,output_modalities=None,tools_required=False):[m
+         required_caps=set(self._validate_capabilities([capability]));ins=set(self._validate_modalities(input_modalities or ['text'],'input_modalities'));outs=set(self._validate_modalities(output_modalities or ['text'],'output_modalities'))[m
+         return [m.to_dict() for m in self.records() if m.enabled and m.configured and m.health not in {'UNAVAILABLE','BLOCKED'} and required_caps.issubset(m.capabilities) and ins.issubset(m.input_modalities) and outs.issubset(m.output_modalities) and (not tools_required or m.supports_tools)][m
+[36m@@ -122,9 +136,11 @@[m [mclass ModelCapabilityManager:[m
+         except Exception as exc:[m
+             try:self.registry.health.failure(route.selected.record_id,exc)[m
+             except Exception:pass[m
+[32m+[m[32m            self.invalidate_records_cache()[m
+             raise[m
+         try:self.registry.health.success(route.selected.record_id)[m
+         except Exception:pass[m
+[32m+[m[32m        self.invalidate_records_cache()[m
+         return {'route':route.to_dict(),'response':response,'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capabilities':list(route.required_capabilities),'selection_reason':route.selection_reason,'fallback':route.fallback,'provider_request_id':getattr(response,'provider_request_id',None)}}[m
+     def embed(self,texts,*,input_type='query'):[m
+         route=self.route(['embedding'],input_modalities=['text'],output_modalities=['embedding'])[m
+[36m@@ -136,9 +152,11 @@[m [mclass ModelCapabilityManager:[m
+         except Exception as exc:[m
+             try:self.registry.health.failure(route.selected.record_id,exc)[m
+             except Exception:pass[m
+[32m+[m[32m            self.invalidate_records_cache()[m
+             raise[m
+         try:self.registry.health.success(route.selected.record_id)[m
+         except Exception:pass[m
+[32m+[m[32m        self.invalidate_records_cache()[m
+         return {'vectors':vectors,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'embedding','input_type':input_type,'selection_reason':route.selection_reason,'fallback':route.fallback,'vector_count':len(vectors),'dimensions':len(vectors[0]) if vectors else 0}}[m
+     def rerank(self,query,items):[m
+         values=list(items)[m
+[36m@@ -152,9 +170,11 @@[m [mclass ModelCapabilityManager:[m
+         except Exception as exc:[m
+             try:self.registry.health.failure(route.selected.record_id,exc)[m
+             except Exception:pass[m
+[32m+[m[32m            self.invalidate_records_cache()[m
+             raise[m
+         try:self.registry.health.success(route.selected.record_id)[m
+         except Exception:pass[m
+[32m+[m[32m        self.invalidate_records_cache()[m
+         ordered=[][m
+         for rank,row in enumerate(rankings,1):[m
+             item=dict(values[row['index']]) if isinstance(values[row['index']],dict) else {'text':passages[row['index']]}[m
+[36m@@ -170,9 +190,11 @@[m [mclass ModelCapabilityManager:[m
+         except Exception as exc:[m
+             try:self.registry.health.failure(route.selected.record_id,exc)[m
+             except Exception:pass[m
+[32m+[m[32m            self.invalidate_records_cache()[m
+             raise[m
+         try:self.registry.health.success(route.selected.record_id)[m
+         except Exception:pass[m
+[32m+[m[32m        self.invalidate_records_cache()[m
+         return {'result':result,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'image_generation','selection_reason':route.selection_reason,'fallback':route.fallback,'provider_request_id':result.get('provider_request_id'),'provider_status':result.get('provider_status')}}[m
+ [m
+     def voice_provider(self,provider=None):[m
+[36m@@ -203,9 +225,11 @@[m [mclass ModelCapabilityManager:[m
+         except Exception as exc:[m
+             try:self.registry.health.failure(route.selected.record_id,exc)[m
+             except Exception:pass[m
+[32m+[m[32m            self.invalidate_records_cache()[m
+             raise[m
+         try:self.registry.health.success(route.selected.record_id)[m
+         except Exception:pass[m
+[32m+[m[32m        self.invalidate_records_cache()[m
+         return {'assessment':assessment,'route':route.to_dict(),'provenance':{'provider':route.selected.provider,'model':route.selected.model_id,'capability':'safety','selection_reason':route.selection_reason,'fallback':route.fallback,'provider_request_id':assessment.get('provider_request_id')}}[m
+     def status(self,capability):[m
+         outputs={'embedding':['embedding'],'reranking':['ranking'],'image_generation':['image'],'safety':['safety'],'voice':['audio','text']}.get(capability,['text']);inputs={'voice':['audio']}.get(capability,['text'])[m
+[1mdiff --git a/src/sparkle_gen2/personal_data.py b/src/sparkle_gen2/personal_data.py[m
+[1mindex c644f7b..a47bfef 100644[m
+[1m--- a/src/sparkle_gen2/personal_data.py[m
+[1m+++ b/src/sparkle_gen2/personal_data.py[m
+[36m@@ -1,4 +1,5 @@[m
+ from __future__ import annotations[m
+[32m+[m[32mfrom time import monotonic[m
+ [m
+ SOURCE_TO_TOOL={[m
+     'memory':'memory_search',[m
+[36m@@ -9,14 +10,33 @@[m [mSOURCE_TO_TOOL={[m
+     'research':'research_workspace',[m
+ }[m
+ class PersonalDataOrchestrator:[m
+[31m-    def __init__(self,gen1):self.gen1=gen1[m
+[31m-    def available_sources(self):[m
+[32m+[m[32m    def __init__(self,gen1):[m
+[32m+[m[32m        self.gen1=gen1[m
+[32m+[m[32m        self._tools_cache=set()[m
+[32m+[m[32m        self._tools_cache_at=0.0[m
+[32m+[m[32m        self._tools_ttl=5.0[m
+[32m+[m
+[32m+[m[32m    def _tools(self):[m
+[32m+[m[32m        stamp=monotonic()[m
+[32m+[m[32m        if self._tools_cache_at > 0.0 and stamp-self._tools_cache_at < self._tools_ttl:[m
+[32m+[m[32m            return set(self._tools_cache)[m
+         tools=set(self.gen1.health().get('tools',[]))[m
+[32m+[m[32m        self._tools_cache=tools[m
+[32m+[m[32m        self._tools_cache_at=stamp[m
+[32m+[m[32m        return set(tools)[m
+[32m+[m
+[32m+[m[32m    def invalidate_health_cache(self):[m
+[32m+[m[32m        self._tools_cache=set()[m
+[32m+[m[32m        self._tools_cache_at=0.0[m
+[32m+[m
+[32m+[m[32m    def available_sources(self):[m
+[32m+[m[32m        tools=self._tools()[m
+         return {source:(tool in tools) for source,tool in SOURCE_TO_TOOL.items()}[m
+[32m+[m
+     def retrieve(self,source,query,*,limit=5):[m
+         if source not in SOURCE_TO_TOOL:raise KeyError(source)[m
+         tool=SOURCE_TO_TOOL[source][m
+[31m-        if tool not in set(self.gen1.health().get('tools',[])):raise RuntimeError(f'unsupported_source:{source}')[m
+[32m+[m[32m        if tool not in self._tools():raise RuntimeError(f'unsupported_source:{source}')[m
+         args={'query':query,'limit':limit}[m
+         if tool=='project_tasks':args={'project':query}[m
+         elif tool=='learning_progress':args={'course':query}[m
+[1mdiff --git a/src/sparkle_gen2/planner.py b/src/sparkle_gen2/planner.py[m
+[1mindex 8092838..a1ee619 100644[m
+[1m--- a/src/sparkle_gen2/planner.py[m
+[1m+++ b/src/sparkle_gen2/planner.py[m
+[36m@@ -14,6 +14,124 @@[m [mclass Gen1PlannerModel:[m
+     def propose(self,goal:Goal,context:dict[str,Any],available_capabilities:list[str]):[m
+         payload=self.gateway.plan(goal.to_dict(),context,available_capabilities)[m
+         raw=payload['proposal']; prov=payload['provenance'][m
+[32m+[m
+[32m+[m[32m        # Cycle75: canonicalize and validate goal success criteria at the[m
+[32m+[m[32m        # planner-model boundary, before PlanProposal construction.[m
+[32m+[m[32m        raw_criteria = raw.get('success_criteria')[m
+[32m+[m[32m        if not isinstance(raw_criteria, list) or not raw_criteria:[m
+[32m+[m[32m            raise RuntimeError('planner_success_criteria_invalid')[m
+[32m+[m
+[32m+[m[32m        normalized_criteria = [][m
+[32m+[m[32m        for criterion in raw_criteria:[m
+[32m+[m[32m            if not isinstance(criterion, dict):[m
+[32m+[m[32m                raise RuntimeError('planner_goal_criterion_not_object')[m
+[32m+[m
+[32m+[m[32m            if ([m
+[32m+[m[32m                'description' not in criterion[m
+[32m+[m[32m                or 'verification_method' not in criterion[m
+[32m+[m[32m            ):[m
+[32m+[m[32m                raise RuntimeError([m
+[32m+[m[32m                    'planner_goal_criterion_missing_required_field'[m
+[32m+[m[32m                )[m
+[32m+[m
+[32m+[m[32m            description = criterion['description'][m
+[32m+[m[32m            verification_method = criterion['verification_method'][m
+[32m+[m
+[32m+[m[32m            if not isinstance(description, str) or not description.strip():[m
+[32m+[m[32m                raise RuntimeError([m
+[32m+[m[32m                    'planner_goal_criterion_invalid_description'[m
+[32m+[m[32m                )[m
+[32m+[m
+[32m+[m[32m            if ([m
+[32m+[m[32m                not isinstance(verification_method, str)[m
+[32m+[m[32m                or not verification_method.strip()[m
+[32m+[m[32m            ):[m
+[32m+[m[32m                raise RuntimeError([m
+[32m+[m[32m                    'planner_goal_criterion_invalid_verification_method'[m
+[32m+[m[32m                )[m
+[32m+[m
+[32m+[m[32m            normalized_criteria.append({[m
+[32m+[m[32m                'description': description.strip(),[m
+[32m+[m[32m                'verification_method': verification_method.strip(),[m
+[32m+[m[32m            })[m
+[32m+[m
+[32m+[m[32m        raw['success_criteria'] = normalized_criteria[m
+[32m+[m
+[32m+[m[32m        # Cycle76: deterministic high-confidence routing guard.[m
+[32m+[m[32m        #[m
+[32m+[m[32m        # The model plans the task, but these two unambiguous routes are[m
+[32m+[m[32m        # enforced by Gen-2 after parsing so model tool preference cannot[m
+[32m+[m[32m        # swap personal project discovery with repository inspection.[m
+[32m+[m[32m        goal_request=str(goal.to_dict().get('user_request','')).strip()[m
+[32m+[m[32m        request_lower=goal_request.lower()[m
+[32m+[m
+[32m+[m[32m        repository_markers=([m
+[32m+[m[32m            'repository',[m
+[32m+[m[32m            'repo',[m
+[32m+[m[32m            'codebase',[m
+[32m+[m[32m            'source tree',[m
+[32m+[m[32m            'repository structure',[m
+[32m+[m[32m            'important files',[m
+[32m+[m[32m            'file structure',[m
+[32m+[m[32m            'current code',[m
+[32m+[m[32m            'code files',[m
+[32m+[m[32m            'sparkle-gen2',[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        repository_request=any([m
+[32m+[m[32m            marker in request_lower[m
+[32m+[m[32m            for marker in repository_markers[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        personal_project_request=([m
+[32m+[m[32m            ('my ' in request_lower and 'project' in request_lower)[m
+[32m+[m[32m            or 'personal project' in request_lower[m
+[32m+[m[32m            or 'personal projects' in request_lower[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        steps=raw.get('steps',[])[m
+[32m+[m
+[32m+[m[32m        if ([m
+[32m+[m[32m            isinstance(steps,list)[m
+[32m+[m[32m            and len(steps)==1[m
+[32m+[m[32m            and isinstance(steps[0],dict)[m
+[32m+[m[32m        ):[m
+[32m+[m[32m            step=steps[0][m
+[32m+[m
+[32m+[m[32m            if ([m
+[32m+[m[32m                personal_project_request[m
+[32m+[m[32m                and not repository_request[m
+[32m+[m[32m                and 'project_search' in available_capabilities[m
+[32m+[m[32m            ):[m
+[32m+[m[32m                step['required_capabilities']=['project_search'][m
+[32m+[m[32m                step['arguments']={[m
+[32m+[m[32m                    'query':goal_request,[m
+[32m+[m[32m                    'limit':10,[m
+[32m+[m[32m                }[m
+[32m+[m
+[32m+[m[32m            elif ([m
+[32m+[m[32m                repository_request[m
+[32m+[m[32m                and 'engineering_inspect' in available_capabilities[m
+[32m+[m[32m            ):[m
+[32m+[m[32m                structure_request=any([m
+[32m+[m[32m                    marker in request_lower[m
+[32m+[m[32m                    for marker in ([m
+[32m+[m[32m                        'repository structure',[m
+[32m+[m[32m                        'important files',[m
+[32m+[m[32m                        'file structure',[m
+[32m+[m[32m                        'source tree',[m
+[32m+[m[32m                        'list the files',[m
+[32m+[m[32m                        'file listing',[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                )[m
+[32m+[m
+[32m+[m[32m                if structure_request:[m
+[32m+[m[32m                    step['required_capabilities']=['engineering_inspect'][m
+[32m+[m[32m                    step['arguments']={[m
+[32m+[m[32m                        'operation':'snapshot',[m
+[32m+[m[32m                    }[m
+[32m+[m
+[32m+[m
+         try:[m
+             steps=[PlanProposalStep(**s) for s in raw['steps']][m
+             proposal=PlanProposal([m
+[1mdiff --git a/src/sparkle_gen2/retrieval.py b/src/sparkle_gen2/retrieval.py[m
+[1mindex 9542134..57d18e2 100644[m
+[1m--- a/src/sparkle_gen2/retrieval.py[m
+[1m+++ b/src/sparkle_gen2/retrieval.py[m
+[36m@@ -1,7 +1,10 @@[m
+ from __future__ import annotations[m
+ [m
+[32m+[m[32mfrom functools import lru_cache[m
+[32m+[m
+ class CapabilityRoutedEmbedder:[m
+     def __init__(self,model_manager):self.model_manager=model_manager[m
+[32m+[m[32m    @lru_cache(maxsize=128)[m
+     def embed_query(self,text):return self.model_manager.embed([str(text)],input_type='query')['vectors'][0][m
+     def embed_passage(self,text):return self.model_manager.embed([str(text)],input_type='passage')['vectors'][0][m
+     def __call__(self,text):return self.embed_query(text)[m

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 class CapabilityRoutedEmbedder:
     def __init__(self,model_manager):self.model_manager=model_manager
+    @lru_cache(maxsize=128)
     def embed_query(self,text):return self.model_manager.embed([str(text)],input_type='query')['vectors'][0]
     def embed_passage(self,text):return self.model_manager.embed([str(text)],input_type='passage')['vectors'][0]
     def __call__(self,text):return self.embed_query(text)

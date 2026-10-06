@@ -1,0 +1,12 @@
+<resources>
+    <item name="core_url_input" type="id" />
+    <item name="device_name_input" type="id" />
+    <item name="pair_code_input" type="id" />
+    <item name="test_core_button" type="id" />
+    <item name="pair_button" type="id" />
+    <item name="forget_button" type="id" />
+    <item name="chat_input" type="id" />
+    <item name="send_button" type="id" />
+    <item name="status_text" type="id" />
+    <item name="chat_log" type="id" />
+</resources>

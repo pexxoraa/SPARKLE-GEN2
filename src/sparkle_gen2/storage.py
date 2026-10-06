@@ -54,6 +54,8 @@ class Gen2Store:
             CREATE INDEX IF NOT EXISTS idx_memory_candidates_memory ON memory_candidates(memory_id);
             CREATE TABLE IF NOT EXISTS delegations(request_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,task_run_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_delegations_goal ON delegations(goal_id);
+            CREATE TABLE IF NOT EXISTS os_records(record_id TEXT PRIMARY KEY,owner_user_id TEXT NOT NULL,record_type TEXT NOT NULL,payload TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_os_records_owner_type ON os_records(owner_user_id,record_type);
             CREATE INDEX IF NOT EXISTS idx_delegations_task ON delegations(task_run_id);
             CREATE TABLE IF NOT EXISTS delegation_grants(grant_id TEXT PRIMARY KEY,delegation_request_id TEXT NOT NULL UNIQUE,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_delegation_grants_goal ON delegation_grants(goal_id);
@@ -213,6 +215,27 @@ class Gen2Store:
         lim=max(1,min(int(limit),100))
         with self.connect() as db:rows=db.execute('SELECT payload FROM learning_plans WHERE owner_user_id=? ORDER BY rowid DESC LIMIT ?',(owner_user_id,lim)).fetchall()
         return [LearningPlanState(**json.loads(r[0])) for r in rows]
+
+    def save_os_record(self,record):
+        payload=dict(record)
+        rid=str(payload['record_id']);owner=str(payload.get('owner_user_id','user'));rtype=str(payload['record_type'])
+        with self.connect() as db:db.execute('INSERT INTO os_records(record_id,owner_user_id,record_type,payload) VALUES(?,?,?,?) ON CONFLICT(record_id) DO UPDATE SET owner_user_id=excluded.owner_user_id,record_type=excluded.record_type,payload=excluded.payload',(rid,owner,rtype,self._dump(payload)))
+    def load_os_record(self,record_id):
+        with self.connect() as db:r=db.execute('SELECT payload FROM os_records WHERE record_id=?',(str(record_id),)).fetchone()
+        if r is None:raise KeyError(record_id)
+        return json.loads(r[0])
+    def os_records(self,*,owner_user_id='user',record_type=None,limit=100):
+        lim=max(1,min(int(limit),200));params=[str(owner_user_id)];query='SELECT payload FROM os_records WHERE owner_user_id=?'
+        if record_type is not None:query+=' AND record_type=?';params.append(str(record_type))
+        query+=' ORDER BY rowid DESC LIMIT ?';params.append(lim)
+        with self.connect() as db:rows=db.execute(query,params).fetchall()
+        return [json.loads(r[0]) for r in rows]
+    def delete_os_record(self,record_id,*,owner_user_id='user'):
+        with self.connect() as db:
+            row=db.execute('SELECT owner_user_id FROM os_records WHERE record_id=?',(str(record_id),)).fetchone()
+            if row is None:raise KeyError(record_id)
+            if row[0]!=owner_user_id:raise PermissionError('os_record_owner_mismatch')
+            db.execute('DELETE FROM os_records WHERE record_id=?',(str(record_id),))
 
     def save_proactive_event(self,e):
         with self.connect() as db:db.execute('INSERT INTO proactive_events VALUES(?,?) ON CONFLICT(event_id) DO UPDATE SET payload=excluded.payload',(e.event_id,self._dump(e.to_dict())))
@@ -502,12 +525,54 @@ class Gen2Store:
     def conversation_messages(self,session_id,limit=100):
         with self.connect() as db:rows=db.execute('SELECT payload FROM conversation_messages WHERE session_id=? ORDER BY rowid DESC LIMIT ?',(session_id,max(1,min(int(limit),500)))).fetchall()
         return [json.loads(r[0]) for r in reversed(rows)]
+    def delete_conversation_after(self,session_id,message_id):
+        sid=str(session_id);mid=str(message_id)
+        with self.connect() as db:
+            rows=db.execute('SELECT rowid,message_id FROM conversation_messages WHERE session_id=? ORDER BY rowid',(sid,)).fetchall()
+            rowids=[];found=False
+            for rid,current in rows:
+                if found:rowids.append(rid)
+                if str(current)==mid:found=True
+            for rid in rowids:db.execute('DELETE FROM conversation_messages WHERE rowid=?',(rid,))
+            return len(rowids)
     def all_approvals(self):
         with self.connect() as db:rows=db.execute('SELECT payload FROM approvals ORDER BY rowid DESC').fetchall()
         out=[]
         for r in rows:
             d=json.loads(r[0]);d['risk']=RiskLevel(d['risk']);d['status']=ApprovalStatus(d['status']);out.append(Approval(**d))
         return out
+    def delete_goal(self,goal_id):
+        gid=str(goal_id)
+        with self.connect() as db:
+            tables=(
+                ('background_tasks','goal_id'),('delegation_grants','goal_id'),('delegations','goal_id'),
+                ('memory_candidates','goal_id'),('plan_proposals','goal_id'),('plans','goal_id'),
+                ('task_runs','goal_id'),('permissions','goal_id'),('risks','goal_id'),('approvals','goal_id'),
+                ('criteria','goal_id'),('model_provenance','goal_id'),('events','goal_id'),
+                ('operation_traces','goal_id'),('goals','goal_id'),
+            )
+            for table,column in tables:db.execute(f'DELETE FROM {table} WHERE {column}=?',(gid,))
+            for row in db.execute('SELECT session_id,payload FROM sessions').fetchall():
+                value=json.loads(row[1])
+                if value.get('active_goal_id')==gid:
+                    value['active_goal_id']=None
+                    db.execute('UPDATE sessions SET payload=? WHERE session_id=?',(self._dump(value),row[0]))
+            for row in db.execute('SELECT session_id,payload FROM voice_sessions').fetchall():
+                value=json.loads(row[1])
+                if value.get('pending_goal_id')==gid:
+                    value['pending_goal_id']=None
+                    db.execute('UPDATE voice_sessions SET payload=? WHERE session_id=?',(self._dump(value),row[0]))
+
+    def delete_conversation_session(self,session_id):
+        sid=str(session_id)
+        with self.connect() as db:
+            voice_rows=db.execute('SELECT session_id,payload FROM voice_sessions').fetchall()
+            linked=[r[0] for r in voice_rows if str(json.loads(r[1]).get('conversation_session_id') or '')==sid]
+            for voice_id in linked:db.execute('DELETE FROM voice_events WHERE session_id=?',(voice_id,))
+            for voice_id in linked:db.execute('DELETE FROM voice_sessions WHERE session_id=?',(voice_id,))
+            db.execute('DELETE FROM conversation_messages WHERE session_id=?',(sid,))
+            db.execute('DELETE FROM sessions WHERE session_id=?',(sid,))
+
     def all_task_runs(self,limit=100):
         with self.connect() as db:rows=db.execute('SELECT payload FROM task_runs ORDER BY rowid DESC LIMIT ?',(max(1,min(int(limit),500)),)).fetchall()
         return [json.loads(r[0]) for r in rows]
