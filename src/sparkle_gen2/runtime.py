@@ -8,15 +8,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from .agents.personal import PersonalAgent
-from .connector_catalog import build_default_connectors
+from .infrastructure.connectors import build_default_connectors
 from .application.context_sources import PersonalContextAssembler
-from .devices import DeviceManager
+from .infrastructure.devices import DeviceManager
 from .gen1 import LocalGen1Gateway
 from .sessions import SessionService
 from .personal_data import PersonalDataOrchestrator
 from .world_model import WorldModel
-from .policy import PolicyEngine
-from .infrastructure.storage import Gen2Store
+from .domain.policies import PolicyEngine
+from .infrastructure.persistence import Gen2Store
 from .environment_gateway import load_environment_gateway
 from .document_intelligence import DocumentIntelligenceService
 from .image_runtime import ImageGenerationService
