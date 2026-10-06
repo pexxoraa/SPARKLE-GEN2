@@ -110,6 +110,8 @@ class StaticFileService:
         ".js": "application/javascript; charset=utf-8",
         ".json": "application/json; charset=utf-8",
         ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".ttf": "font/ttf",
     }
 
     def __init__(self, root: Path):

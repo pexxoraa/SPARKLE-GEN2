@@ -1,13 +1,60 @@
 from __future__ import annotations
-import json,sqlite3
+import json,sqlite3,os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from ...domain.models import *
 
 class Gen2Store:
+    @staticmethod
+    def _process_birth(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return None
+        except PermissionError:
+            return 'alive'
+        try:
+            return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
+        except (OSError, IndexError):
+            return 'alive'
+
+    def claim_execution(self, goal_id, lease_id):
+        pid = os.getpid()
+        birth = self._process_birth(pid)
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old = db.execute('SELECT * FROM execution_leases WHERE goal_id=?', (goal_id,)).fetchone()
+            if old and self._process_birth(old['pid']) == old['process_birth']:
+                return False
+            db.execute('INSERT OR REPLACE INTO execution_leases VALUES(?,?,?,?)', (goal_id, lease_id, pid, birth))
+        return True
+
+    def release_execution(self, goal_id, lease_id):
+        with self.connect() as db:
+            db.execute('DELETE FROM execution_leases WHERE goal_id=? AND lease_id=?', (goal_id, lease_id))
+
+    def task_runs_for_goal(self, goal_id):
+        with self.connect() as db:
+            return [json.loads(r['payload']) for r in db.execute('SELECT payload FROM task_runs WHERE goal_id=? ORDER BY rowid DESC', (goal_id,))]
+
     def __init__(self,path:str|Path):
         self.path=Path(path); self.path.parent.mkdir(parents=True,exist_ok=True); self._init()
+    def save_graph(self, nodes, edges):
+        with self.connect() as db:
+            for row in nodes:
+                db.execute('INSERT OR REPLACE INTO personal_graph_nodes VALUES(?,?,?)', (row['id'], row['owner_user_id'], self._dump(row)))
+            for row in edges:
+                if row['from'] != row['to']:
+                    db.execute('INSERT OR REPLACE INTO personal_graph_edges VALUES(?,?,?)', (row['id'], row['owner_user_id'], self._dump(row)))
+
+    def graph_snapshot(self, owner_user_id, *, limit=500):
+        with self.connect() as db:
+            nodes=[json.loads(r['payload']) for r in db.execute('SELECT payload FROM personal_graph_nodes WHERE owner_user_id=? ORDER BY rowid DESC LIMIT ?', (owner_user_id, limit))]
+            identities={x['id'] for x in nodes}
+            edges=[json.loads(r['payload']) for r in db.execute('SELECT payload FROM personal_graph_edges WHERE owner_user_id=? ORDER BY rowid DESC LIMIT ?', (owner_user_id, limit*3))]
+        return {'nodes':nodes,'edges':[e for e in edges if e['from'] in identities and e['to'] in identities], 'persistent':True, 'owner_user_id':owner_user_id}
+
     @contextmanager
     def connect(self):
         db=sqlite3.connect(self.path);db.row_factory=sqlite3.Row
@@ -24,6 +71,9 @@ class Gen2Store:
             CREATE TABLE IF NOT EXISTS plans(plan_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS plan_proposals(proposal_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS task_runs(task_run_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS execution_leases(goal_id TEXT PRIMARY KEY,lease_id TEXT NOT NULL,pid INTEGER NOT NULL,process_birth TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS personal_graph_nodes(node_id TEXT NOT NULL,owner_user_id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(node_id,owner_user_id));
+            CREATE TABLE IF NOT EXISTS personal_graph_edges(edge_id TEXT NOT NULL,owner_user_id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(edge_id,owner_user_id));
             CREATE TABLE IF NOT EXISTS permissions(permission_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS risks(risk_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS approvals(approval_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,payload TEXT NOT NULL);
@@ -236,6 +286,14 @@ class Gen2Store:
             if row is None:raise KeyError(record_id)
             if row[0]!=owner_user_id:raise PermissionError('os_record_owner_mismatch')
             db.execute('DELETE FROM os_records WHERE record_id=?',(str(record_id),))
+            self._remove_graph_nodes(db,{str(record_id)},owner_user_id)
+
+    def _remove_graph_nodes(self,db,identities,owner):
+        for identity in identities:db.execute('DELETE FROM personal_graph_nodes WHERE node_id=? AND owner_user_id=?',(identity,owner))
+        for row in db.execute('SELECT edge_id,payload FROM personal_graph_edges WHERE owner_user_id=?',(owner,)).fetchall():
+            edge=json.loads(row['payload'])
+            if edge['from'] in identities or edge['to'] in identities:
+                db.execute('DELETE FROM personal_graph_edges WHERE edge_id=? AND owner_user_id=?',(row['edge_id'],owner))
 
     def save_proactive_event(self,e):
         with self.connect() as db:db.execute('INSERT INTO proactive_events VALUES(?,?) ON CONFLICT(event_id) DO UPDATE SET payload=excluded.payload',(e.event_id,self._dump(e.to_dict())))
@@ -544,6 +602,13 @@ class Gen2Store:
     def delete_goal(self,goal_id):
         gid=str(goal_id)
         with self.connect() as db:
+            goal=db.execute('SELECT payload FROM goals WHERE goal_id=?',(gid,)).fetchone()
+            if goal:
+                owner=json.loads(goal[0]).get('user_id','user')
+                identities={r['node_id'] for r in db.execute('SELECT node_id,payload FROM personal_graph_nodes WHERE owner_user_id=?',(owner,)).fetchall() if json.loads(r['payload']).get('goal_id')==gid}
+                self._remove_graph_nodes(db,identities|{gid,'task:'+gid},owner)
+            db.execute('DELETE FROM execution_leases WHERE goal_id=?',(gid,))
+            db.execute('DELETE FROM personal_settings WHERE setting_key=?',('execution_control:'+gid,))
             tables=(
                 ('background_tasks','goal_id'),('delegation_grants','goal_id'),('delegations','goal_id'),
                 ('memory_candidates','goal_id'),('plan_proposals','goal_id'),('plans','goal_id'),

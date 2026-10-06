@@ -16,6 +16,7 @@ class Experiment:
     project_id:str|None=None;research_id:str|None=None;observations:list[dict]=field(default_factory=list)
     results:dict=field(default_factory=dict);metrics:dict=field(default_factory=dict);conclusion:str|None=None
     updated_at:str|None=None;version:int=1;provenance:dict=field(default_factory=dict);verification_state:str='PENDING'
+    owner_user_id:str='user'
     def to_dict(self):return asdict(self)
 
 class ExperimentManager:
@@ -30,11 +31,14 @@ class ExperimentManager:
         return dict(value)
     def _touch(self,e):e.updated_at=now();e.version=max(1,int(e.version))+1;return self._save(e)
     def _save(self,e):
-        if self.store is not None:self.store.save_experiment(e)
+        if self.store is not None:
+            self.store.save_experiment(e)
+            from ..personal_os.graph import PersonalGraphService
+            PersonalGraphService(self.store).record(e.to_dict())
         return e
-    def create(self,hypothesis,method,*,configuration=None,dataset=None,code_version=None,model=None,project_id=None,research_id=None,provenance=None):
+    def create(self,hypothesis,method,*,configuration=None,dataset=None,code_version=None,model=None,project_id=None,research_id=None,provenance=None,owner_user_id='user'):
         if not isinstance(hypothesis,str) or not hypothesis.strip() or len(hypothesis)>4000 or not isinstance(method,str) or not method.strip() or len(method)>4000:raise ValueError('hypothesis and method required and bounded')
-        config=self._bounded_dict(dict(configuration or {}),MAX_CONFIGURATION_BYTES,'configuration');stamp=now();e=Experiment(uuid.uuid4().hex,hypothesis.strip(),method.strip(),'PLANNED',stamp,config,dataset,code_version,model,project_id,research_id,updated_at=stamp,provenance=dict(provenance or {}));self.items[e.experiment_id]=e;return self._save(e)
+        config=self._bounded_dict(dict(configuration or {}),MAX_CONFIGURATION_BYTES,'configuration');stamp=now();e=Experiment(uuid.uuid4().hex,hypothesis.strip(),method.strip(),'PLANNED',stamp,config,dataset,code_version,model,project_id,research_id,updated_at=stamp,provenance=dict(provenance or {}),owner_user_id=owner_user_id);self.items[e.experiment_id]=e;return self._save(e)
     def configure(self,eid,*,configuration=None,dataset=None,code_version=None,model=None):
         e=self.items[eid]
         if e.status not in {'PLANNED','PAUSED'}:raise ValueError('experiment configuration is locked while active or closed')

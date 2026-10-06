@@ -50,6 +50,7 @@ class ConversationService:
     def _looks_like_knowledge_question(cls,text):
         normalized=cls._normalize_turn(text)
         if not normalized:return False
+        if normalized.startswith(('show my ','list my ','what are my projects','what do you remember','how are my goals')):return False
         status_queries=('how did it go','how is it going','what are you doing','what are you waiting for','show me what you are doing','show me what you’re doing','what are my tasks','what are my goals','show my tasks','show my goals','status')
         if any(normalized.startswith(x) for x in status_queries):return False
         action_prefixes=('can you open ','can you launch ','can you run ','can you start ','can you stop ','can you close ','can you delete ','can you create ','can you download ','can you send ','can you install ','can you execute ','can you play ','could you open ','could you launch ','could you run ','could you start ','could you stop ','could you close ','could you delete ','could you create ','could you download ','could you send ','could you install ','could you execute ','could you play ')
@@ -128,8 +129,9 @@ class ConversationService:
             'book ','set up ','setup ','turn on ','turn off ','connect ','disconnect ',
             'read ','summarize ','analyze ','generate ','deploy ','test ',
             'complete ','finish ','cancel ','approve ','reject ','acknowledge ','mark ',
-            'calculate ','compute ','inspect ','implement ','develop ','design ',
+            'calculate ','compute ','inspect ','implement ','develop ','design ','add ',
             'organize ','evaluate ','measure ','remind ','learn ','study ',
+            'show my ','list my ','what are my projects','what do you remember','how are my goals',
             'can you open ','can you launch ','can you run ','can you start ',
             'can you stop ','can you close ','can you delete ','can you create ',
             'can you download ','can you send ','can you install ','can you execute ',
@@ -207,6 +209,8 @@ class ConversationService:
         self.store.save_goal(goal)
         run=TaskRun(uuid.uuid4().hex,goal.goal_id,None,[],[],[],[],[],[{'type':'task_capture','label':label,'created_at':stamp}],stamp,stamp,None,'CAPTURED',None)
         self.store.save_task_run(run)
+        from .personal_os.graph import PersonalGraphService
+        PersonalGraphService(self.store).execution(goal,run=run)
         self.store.event(goal.goal_id,'task_captured',{'label':label},stamp)
         return {'goal_id':goal.goal_id,'task_run_id':run.task_run_id,'status':'COMPLETED','text':f'Added task: {label}.','task_capture':True,'task_label':label,'checked':['task_capture'],'verified':['task persisted']}
     @classmethod
@@ -285,10 +289,12 @@ class ConversationService:
             out.append({**row,'title':first[:58] + ('…' if len(first)>58 else ''),'latest_user':latest[:180],'message_count':len(messages)})
         return out
 
-    def _answer(self,s,text,model_id=None):
+    def _answer(self,s,text,model_id=None,agent_id='personal'):
         manager=getattr(getattr(self.agent,'gen1',None),'model_manager',None)
         if manager is None:raise RuntimeError('conversation_model_unavailable')
         context=self._conversation_context(s,text)
+        registry=getattr(self.agent,'agent_registry',None)
+        profile=registry.resolve(agent_id).to_dict() if registry is not None else {}
         selected=model_id or (self.store.load_setting('conversation_model',{}) or {}).get('model_id') or 'auto'
         prior='\\n'.join(f"{row['role'].upper()}: {row['text']}" for row in context['recent_turns'][-6:-1]) or '(no earlier messages)'
         related='\\n'.join(f"- {x['type']}: {x['title']} [{x['status']}]" for x in context['related_work']) or '(no directly related Personal OS record)'
@@ -313,6 +319,7 @@ class ConversationService:
             'For decisions use Options, Tradeoffs, Recommendation, Next action. '
             'For a simple question, keep it simple. '
             'Before finalizing, silently verify that every major paragraph supports the current user request.\\n\\n'
+            f'AGENT_PROFILE={profile}\\n'
             f'THREAD_FOCUS={context["thread_focus"]}\\n'
             f'INTENT={context["intent"]}\\n'
             f'CONTINUITY={context["continuity"]}\\n'
@@ -336,15 +343,6 @@ class ConversationService:
         return {'text':answer,'status':'COMPLETED','route':result.get('route'),'provenance':result.get('provenance',{}),'conversation_context':context}
     def _dispatch(self,s,text,target_device_id=None,target_device_kind=None,model_id=None,agent_id='personal'):
         profile=getattr(getattr(self.agent,'agent_registry',None),'resolve',lambda x:None)(agent_id)
-        if profile is not None and agent_id!='personal':
-            # Named agents currently share the trusted PersonalAgent execution boundary.
-            # Their profile constrains the planner/delegation surface; provider/model routing remains separate.
-            if profile.agent_id=='research' and not self._looks_like_knowledge_question(text):
-                text='Research task: '+text
-            elif profile.agent_id=='learning' and not self._looks_like_knowledge_question(text):
-                text='Learning task: '+text
-            elif profile.agent_id=='engineering':
-                text='Engineering task: '+text
         active=s.active_goal_id;normalized=self._normalize_turn(text)
         if active:
             status_prefixes=('how did it go','how is it going','what are you doing','what are you waiting for','show me what you are doing','show me what you’re doing','status')
@@ -360,16 +358,18 @@ class ConversationService:
         if self._looks_like_task_list_request(text):return self._task_list(owner_user_id='user')
         captured=self._capture_task(text)
         if captured is not None:return captured
-        if self._looks_like_knowledge_question(text) and not target_device_id:return self._answer(s,text,model_id=model_id)
+        if self._looks_like_knowledge_question(text) and not target_device_id:return self._answer(s,text,model_id=model_id,agent_id=agent_id)
         if target_device_id or self._looks_like_action_request(text):
-            if target_device_id:return self.agent.start(text,target_device_id=target_device_id,target_device_kind=target_device_kind)
-            return self.agent.start(text)
-        return self._answer(s,text,model_id=model_id)
+            options={'agent_id':agent_id} if profile is not None and agent_id!='personal' else {}
+            if target_device_id:return self.agent.start(text,target_device_id=target_device_id,target_device_kind=target_device_kind,**options)
+            return self.agent.start(text,**options)
+        return self._answer(s,text,model_id=model_id,agent_id=agent_id)
     def send(self,text,*,session_id=None,device_id=None,target_device_id=None,target_device_kind=None,model_id=None,agent_id=None):
         if not isinstance(text,str) or not text.strip():raise ValueError('message_required')
         registry=getattr(self.agent,'agent_registry',None)
-        profile=registry.resolve(agent_id) if registry is not None else None
-        selected_agent=(profile.agent_id if profile else (self.store.load_setting('conversation_agent',{}) or {}).get('agent_id') or 'personal')
+        selection=agent_id or (self.store.load_setting('conversation_agent',{}) or {}).get('agent_id') or 'personal'
+        profile=registry.resolve(selection) if registry is not None else None
+        selected_agent=profile.agent_id if profile else selection
         s=self.ensure_session(session_id);user={'message_id':uuid.uuid4().hex,'session_id':s.session_id,'role':'user','text':text.strip(),'created_at':now(),'device_id':device_id};self.store.save_conversation_message(user['message_id'],s.session_id,user)
         result=self._dispatch(s,text.strip(),target_device_id=target_device_id,target_device_kind=target_device_kind,model_id=model_id,agent_id=selected_agent)
         context=result.get('conversation_context') or self._conversation_context(s,text.strip())

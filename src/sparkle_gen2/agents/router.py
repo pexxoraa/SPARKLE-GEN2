@@ -17,4 +17,11 @@ class AgentRuntime:
 
     def profile(self, agent_id: str | None): return self.registry.resolve(agent_id)
 
+    def respond(self, request: AgentRequest, agent_id: str | None = None) -> AgentResponse:
+        profile=self.registry.resolve(agent_id)
+        coordinator=self.agents.get(profile.agent_id) or self.agents.get('personal')
+        if coordinator is None:raise KeyError('personal_coordinator_unavailable')
+        metadata=dict(request.metadata)|{'agent_id':profile.agent_id}
+        return coordinator.respond(AgentRequest(request.text,request.user_id,request.session_id,metadata))
+
     def list(self): return self.registry.list(conversation_only=True)

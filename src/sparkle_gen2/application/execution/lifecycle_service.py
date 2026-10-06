@@ -5,6 +5,8 @@ from datetime import UTC,datetime,timedelta
 from typing import Any
 from ...core_time import now
 from ...gen1 import Gen1Gateway,ToolObservation
+from ...domain.contracts.tool_protocol import ToolInput,ToolOutput,ToolError
+from ...agents.base import AgentResult
 from ...failures import FailureClassifier
 from ...delegation import DelegationRequest,SpecialistDelegationService
 from ...domain.models import *
@@ -24,14 +26,16 @@ class ExecutionLifecycleService:
     """Own the PersonalAgent execution lifecycle; agent remains the compatibility facade."""
 
     @staticmethod
-    def start(agent,request,*,user_id='user',target_device_id=None,target_device_kind=None):
+    def start(agent,request,*,user_id='user',target_device_id=None,target_device_kind=None,agent_profile=None):
             if not isinstance(request,str) or not request.strip():raise ValueError('request is required')
             if not isinstance(user_id,str) or not user_id.strip() or len(user_id)>256:raise ValueError('user_id is invalid')
             trace_id=uuid.uuid4().hex;target_device_id=str(target_device_id).strip() if target_device_id else None;target_device_kind=str(target_device_kind).strip().lower() if target_device_kind else None
             if target_device_id and len(target_device_id)>256:raise ValueError('target_device_id is invalid')
             if target_device_kind and target_device_kind not in {'computer','linux','mobile'}:raise ValueError('target_device_kind is invalid')
-            goal=agent._goal(request,user_id,target_device_id,target_device_kind);agent.store.save_goal(goal);agent.store.event(goal.goal_id,'goal_created',{'user_id':user_id,'target_device_kind':target_device_kind},now());agent.traces.record('goal','personal_agent','CREATED',goal_id=goal.goal_id,trace_id=trace_id,correlation={'user_id':user_id})
+            goal=agent._goal(request,user_id,target_device_id,target_device_kind);goal.metadata['agent_profile']=dict(agent_profile or {});agent.store.save_goal(goal);agent.store.event(goal.goal_id,'goal_created',{'user_id':user_id,'target_device_kind':target_device_kind},now());agent.traces.record('goal','personal_agent','CREATED',goal_id=goal.goal_id,trace_id=trace_id,correlation={'user_id':user_id})
             goal.status=GoalStatus.UNDERSTANDING;goal.updated_at=now();agent.store.save_goal(goal)
+            run=TaskRun(uuid.uuid4().hex,goal.goal_id,None,[],[],[],[],[],[],now(),now(),goal.deadline,'PLANNING',trace_id)
+            agent.store.save_task_run(run);agent.graph.execution(goal,None,run)
             context=None
             if agent.context_provider is not None:
                 try:
@@ -53,14 +57,15 @@ class ExecutionLifecycleService:
             if remembered:context={'source':'completion_memory+'+str(context.get('source','')),'rendered':(str(remembered)+'\n'+str(context.get('rendered','')))[:6000]}
             health=agent._execution_health();capabilities=list(health.get('tools',[]))
             schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities}
-            minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
+            minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'capability_registry':agent.capabilities.definitions(),'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
             agent.store.event(goal.goal_id,'context_retrieved',{'source':minimal['source'],'capability_count':len(capabilities)},now());agent.traces.record('context','personal_context','RETRIEVED',goal_id=goal.goal_id,trace_id=trace_id,detail={'source':minimal['source'],'capability_count':len(capabilities)})
             last_error=None
             for attempt in range(agent.planner_retries+1):
                 try:
-                    proposal,provenance=agent.planner.propose(goal,minimal,capabilities)
+                    proposal,provenance=agent._propose(goal,minimal,capabilities,run)
                     validator=PlanValidator(set(capabilities),agent.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
                     agent._validate_plan_arguments(plan,schemas,goal)
+                    for planned_step in plan.steps:planned_step.preferred_agent=str((agent_profile or {}).get('agent_id','personal'))
                     agent.store.save_plan_proposal(proposal);agent.store.save_provenance(goal.goal_id,provenance)
                     for permission,risk in decisions:agent.store.save_permission(goal.goal_id,permission);agent.store.save_risk(goal.goal_id,risk)
                     break
@@ -68,7 +73,8 @@ class ExecutionLifecycleService:
                     last_error=exc;agent.store.event(goal.goal_id,'planning_failed',{'attempt':attempt+1,'error_type':type(exc).__name__,'reason':str(exc)[:200]},now());agent.traces.record('planning','planner','FAILED',goal_id=goal.goal_id,trace_id=trace_id,detail={'attempt':attempt+1,'error_type':type(exc).__name__})
             else:
                 goal.status=GoalStatus.BLOCKED if isinstance(last_error,PlanValidationError) else GoalStatus.WAITING;goal.updated_at=now();agent.store.save_goal(goal)
-                return {'goal_id':goal.goal_id,'trace_id':trace_id,'status':goal.status.value,'text':f'Planning could not produce a safe executable plan: {last_error}. No tools were executed.','checked':[],'verified':[],'approvals':[]}
+                run.status=goal.status.value;run.updated_at=now();agent.store.save_task_run(run);agent.graph.execution(goal,None,run)
+                return {'goal_id':goal.goal_id,'task_run_id':run.task_run_id,'trace_id':trace_id,'status':goal.status.value,'text':f'Planning could not produce a safe executable plan: {last_error}. No tools were executed.','checked':[],'verified':[],'approvals':[]}
             goal.plan_id=plan.plan_id;goal.success_criteria=[c['description'] for c in proposal.success_criteria];goal.status=GoalStatus.PLANNED;goal.updated_at=now();agent.store.save_plan(plan);agent.store.save_goal(goal)
             criteria=list(proposal.success_criteria)
             criteria.extend([
@@ -81,7 +87,7 @@ class ExecutionLifecycleService:
                 if key in seen:continue
                 seen.add(key);agent.store.save_criterion(GoalSuccessCriterion(uuid.uuid4().hex,goal.goal_id,c['description'],c['verification_method'],CriterionStatus.PENDING,{}))
             agent.store.event(goal.goal_id,'plan_validated',{'plan_id':plan.plan_id,'proposal_id':proposal.proposal_id},now());agent.traces.record('planning','planner','VALIDATED',goal_id=goal.goal_id,trace_id=trace_id,detail={'plan_id':plan.plan_id})
-            run=TaskRun(uuid.uuid4().hex,goal.goal_id,None,[],[],[s.step_id for s in plan.steps],[],[],[],now(),now(),goal.deadline,'RUNNING',trace_id);agent.store.save_task_run(run);agent.traces.record('task','personal_agent','STARTED',goal_id=goal.goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'plan_id':plan.plan_id})
+            run.pending_steps=[s.step_id for s in plan.steps];run.status='RUNNING';run.updated_at=now();agent.store.save_task_run(run);agent.traces.record('task','personal_agent','STARTED',goal_id=goal.goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'plan_id':plan.plan_id})
             return agent.resume(goal.goal_id)
 
     @staticmethod
@@ -100,9 +106,10 @@ class ExecutionLifecycleService:
                     docctx=agent.documents.context(goal.user_request,user_id=goal.user_id,k=5,max_chars=5000)
                     if docctx.get('item_count'):context={'source':'documents+'+str(context.get('source','')),'rendered':('DOCUMENT_EVIDENCE:\n'+docctx['rendered']+'\nOTHER_CONTEXT:\n'+str(context.get('rendered','')))[:10000],'document_items':docctx['items']}
                 except Exception as exc:agent.store.event(goal.goal_id,'document_context_failed',{'error_type':type(exc).__name__},now())
-            health=agent._execution_health();capabilities=list(health.get('tools',[]));schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities};minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
-            proposal,provenance=agent.planner.propose(goal,minimal,capabilities);validator=PlanValidator(set(capabilities),agent.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
+            health=agent._execution_health();capabilities=list(health.get('tools',[]));schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name') in capabilities};minimal={'source':context.get('source'),'rendered':str(context.get('rendered',''))[:6000],'capabilities':capabilities,'capability_registry':agent.capabilities.definitions(),'tool_schemas':schemas,'deadline':goal.deadline,'constraints':goal.constraints}
+            proposal,provenance=agent._propose(goal,minimal,capabilities,old_run);validator=PlanValidator(set(capabilities),agent.policy);plan,decisions=validator.validate(proposal,subject='user',timestamp=now())
             agent._validate_plan_arguments(plan,schemas,goal)
+            for planned_step in plan.steps:planned_step.preferred_agent=str((goal.metadata.get('agent_profile') or {}).get('agent_id','personal'))
             agent.store.save_plan_proposal(proposal);agent.store.save_provenance(goal_id,provenance)
             for permission,risk in decisions:agent.store.save_permission(goal_id,permission);agent.store.save_risk(goal_id,risk)
             old_run.status='SUPERSEDED';old_run.updated_at=now();agent.store.save_task_run(old_run);agent.store.clear_criteria(goal_id)
@@ -131,6 +138,7 @@ class ExecutionLifecycleService:
     def cancel(agent,goal_id):
             goal=agent.store.load_goal(goal_id);plan=agent.store.load_plan(goal.plan_id);run=agent.store.load_task_run_for_goal(goal_id)
             if goal.status==GoalStatus.COMPLETED:raise ValueError('completed goal cannot be cancelled')
+            agent.controls.request(goal_id,'CANCELLED')
             goal.status=GoalStatus.CANCELLED;run.status='CANCELLED';run.current_step=None;agent.store.cancel_pending_approvals(goal_id,now())
             for row in agent.store.delegations(goal_id=goal_id):agent.delegation.cancel(row['request']['request_id'])
             agent.store.event(goal_id,'goal_cancelled',{},now());agent._persist(goal,plan,run);return agent.report(goal,plan,run)
@@ -138,17 +146,33 @@ class ExecutionLifecycleService:
     @staticmethod
     def resume(agent,goal_id):
             goal=agent.store.load_goal(goal_id);plan=agent.store.load_plan(goal.plan_id);run=agent.store.load_task_run_for_goal(goal_id)
+            if agent.controls.apply(goal,run):
+                agent._persist(goal,plan,run);return agent.report(goal,plan,run)
             if not run.trace_id:run.trace_id=uuid.uuid4().hex;agent.store.save_task_run(run)
             trace_id=run.trace_id
             if goal.status==GoalStatus.COMPLETED:
                 agent._analyze_completion_memory(goal,run);return agent.report(goal,plan,run)
             if goal.status==GoalStatus.CANCELLED:return agent.report(goal,plan,run)
+            if run.status in {'ACTION_TIMEOUT','INTERRUPTED_ACTION'}:return agent.report(goal,plan,run)
             if agent._deadline_expired(goal.deadline):
                 goal.status=GoalStatus.BLOCKED;run.status='DEADLINE_EXPIRED';agent.store.event(goal_id,'deadline_expired',{'deadline':goal.deadline},now());agent._persist(goal,plan,run);return agent.report(goal,plan,run)
             health=agent._execution_health();schemas={d.get('name'):d for d in health.get('tool_definitions',[]) if d.get('name')}
             iterations=0
             for step in plan.steps:
                 if step.status==StepStatus.VERIFIED:continue
+                if agent.controls.apply(goal,run):
+                    agent._persist(goal,plan,run);return agent.report(goal,plan,run)
+                history=agent.store.task_runs_for_goal(goal_id)
+                calls=sum(int(x.get('iterations',0)) for x in history)
+                elapsed=sum(float(x.get('active_runtime_seconds',0)) for x in history)
+                if calls>=agent.max_iterations or elapsed>=agent.max_runtime_seconds:
+                    goal.status=GoalStatus.BLOCKED;run.status='BUDGET_EXHAUSTED'
+                    agent.store.event(goal_id,'execution_budget_exhausted',{'iterations':calls,'runtime_seconds':elapsed},now())
+                    agent._persist(goal,plan,run);return agent.report(goal,plan,run)
+                if step.status==StepStatus.EXECUTING and step.authorization_requirement!='ALLOW':
+                    goal.status=GoalStatus.BLOCKED;run.status='INTERRUPTED_ACTION'
+                    agent.store.event(goal_id,'interrupted_action_requires_review',{'step_id':step.step_id},now())
+                    agent._persist(goal,plan,run);return agent.report(goal,plan,run)
                 argument_error=agent._schema_argument_error(step,schemas)
                 if argument_error:
                     return agent._block_invalid_arguments(goal,plan,run,step,argument_error)
@@ -247,111 +271,51 @@ class ExecutionLifecycleService:
                         step.result={'output':obs.output,'verification':obs.verification};agent.store.event(goal_id,'delegation_observed',{'request_id':request_id,'status':'FAILED','specialists':specialists},now());agent.traces.record('delegation','gen1_run_multi','FAILED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id,'request_id':request_id},detail={'specialists':specialists});step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';agent._persist(goal,plan,run);return agent.report(goal,plan,run)
                 if step.attempts>step.retry_limit:
                     step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';break
-                goal.status=GoalStatus.EXECUTING;step.status=StepStatus.EXECUTING;step.attempts+=1;run.current_step=step.step_id;agent._persist(goal,plan,run);agent.traces.record('action',step.preferred_tool,'STARTED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id})
-                if step.preferred_tool=='specialist_delegate':
-                    result=agent.delegation.execute(delegation_request);output=result.to_dict();obs=ToolObservation(result.status=='COMPLETED',step.preferred_tool,output,dict(result.verification))
-                    if delegation_request.grant_id:
-                        try:
-                            consumed=agent.delegation.grants.load(delegation_request.grant_id)
-                            if consumed.state=='CONSUMED':
-                                agent.store.event(goal_id,'delegation_grant_consumed',{'grant_id':consumed.grant_id,'approval_id':consumed.approval_id,'request_id':request_id,'specialist':consumed.allowed_specialists[0],'tool':consumed.capability,'consumed_at':consumed.consumed_at},now());agent.traces.record('authorization','delegation_grant','CONSUMED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'approval_id':consumed.approval_id,'grant_id':consumed.grant_id,'request_id':request_id},detail={'specialist':consumed.allowed_specialists[0],'tool':consumed.capability,'issuer':consumed.issuer})
-                        except Exception:pass
-                    agent.store.event(goal_id,'delegation_observed',{'request_id':request_id,'status':output.get('status'),'specialists':specialists},now());agent.traces.record('delegation','gen1_run_multi',str(output.get('status','FAILED')),goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id,'request_id':request_id},detail={'specialists':specialists,'grant_id':delegation_request.grant_id})
-                    if result.status=='WAITING_APPROVAL':
-                        step.result={'output':obs.output,'verification':obs.verification};step.status=StepStatus.WAITING;goal.status=GoalStatus.WAITING;run.status='WAITING_FOR_DELEGATION_APPROVAL'
-                        for pending_item in result.provenance.get('pending_approvals',[]):
-                            aid=pending_item.get('approval_id')
-                            if isinstance(aid,str) and aid not in run.approvals:run.approvals.append(aid)
-                        agent.store.event(goal_id,'delegated_gen1_approval_required',{'request_id':request_id,'approvals':result.provenance.get('pending_approvals',[])},now());agent._persist(goal,plan,run);return agent.report(goal,plan,run)
-                elif step.preferred_tool in {'learning_plan_create','learning_plan_inspect','learning_assess'} and agent.learning is not None:
-                    value=agent.learning.invoke(step.preferred_tool,step.arguments,owner_user_id=goal.user_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
-                    agent.store.event(goal_id,'learning_state_updated' if step.preferred_tool!='learning_plan_inspect' else 'learning_state_inspected',{'tool':step.preferred_tool,'plan_id':value['verification'].get('plan_id'),'assessment_id':value['verification'].get('assessment_id')},now())
-                elif step.preferred_tool.startswith('automation_') and agent.automation is not None and step.preferred_tool!='automation_inspect':
-                    value=agent.automation.invoke(step.preferred_tool,step.arguments,owner_user_id=goal.user_id,source_goal_id=goal.goal_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
-                elif step.preferred_tool=='connector_list' and agent.connectors is not None:
-                    value={'connectors':agent.connectors.discover(owner_user_id=goal.user_id)};obs=ToolObservation(True,step.preferred_tool,value,{'verified':all(x.get('connector_id') for x in value['connectors']),'method':'owner-scoped persisted connector registry projection'})
-                elif step.preferred_tool=='connector_inspect' and agent.connectors is not None:
-                    cid=str(step.arguments.get('connector_id',''))
-                    if not cid:
-                        return agent._block_invalid_arguments(goal,plan,run,step,{'error':'missing_required_argument','argument':'connector_id'})
+                goal.status=GoalStatus.EXECUTING;step.status=StepStatus.EXECUTING;step.attempts+=1;run.iterations+=1;run.resource_usage['tool_calls']=run.iterations;run.current_step=step.step_id;agent._persist(goal,plan,run);agent.traces.record('action',step.preferred_tool,'STARTED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id})
+                action_started=monotonic()
+                try:
+                    if step.preferred_tool=='specialist_delegate':
+                        result=agent.delegation.execute(delegation_request);output=result.to_dict();obs=ToolObservation(result.status=='COMPLETED',step.preferred_tool,output,dict(result.verification))
+                        if delegation_request.grant_id:
+                            try:
+                                consumed=agent.delegation.grants.load(delegation_request.grant_id)
+                                if consumed.state=='CONSUMED':
+                                    agent.store.event(goal_id,'delegation_grant_consumed',{'grant_id':consumed.grant_id,'approval_id':consumed.approval_id,'request_id':request_id,'specialist':consumed.allowed_specialists[0],'tool':consumed.capability,'consumed_at':consumed.consumed_at},now());agent.traces.record('authorization','delegation_grant','CONSUMED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'approval_id':consumed.approval_id,'grant_id':consumed.grant_id,'request_id':request_id},detail={'specialist':consumed.allowed_specialists[0],'tool':consumed.capability,'issuer':consumed.issuer})
+                            except Exception:pass
+                        agent.store.event(goal_id,'delegation_observed',{'request_id':request_id,'status':output.get('status'),'specialists':specialists},now());agent.traces.record('delegation','gen1_run_multi',str(output.get('status','FAILED')),goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id,'request_id':request_id},detail={'specialists':specialists,'grant_id':delegation_request.grant_id})
+                        if result.status=='WAITING_APPROVAL':
+                            step.result={'output':obs.output,'verification':obs.verification};step.status=StepStatus.WAITING;goal.status=GoalStatus.WAITING;run.status='WAITING_FOR_DELEGATION_APPROVAL'
+                            for pending_item in result.provenance.get('pending_approvals',[]):
+                                aid=pending_item.get('approval_id')
+                                if isinstance(aid,str) and aid not in run.approvals:run.approvals.append(aid)
+                            agent.store.event(goal_id,'delegated_gen1_approval_required',{'request_id':request_id,'approvals':result.provenance.get('pending_approvals',[])},now());agent._persist(goal,plan,run);return agent.report(goal,plan,run)
                     else:
-                        value=agent.connectors.inspect(cid,owner_user_id=goal.user_id);obs=ToolObservation(value.get('connector_id')==cid,step.preferred_tool,value,{'verified':value.get('connector_id')==cid and value.get('owner_user_id',goal.user_id)==goal.user_id,'method':'owner-scoped connector state reread','connector_id':cid})
-                elif step.preferred_tool=='connector_capabilities' and agent.connectors is not None:
-                    cid=str(step.arguments.get('connector_id',''))
-                    if not cid:
-                        return agent._block_invalid_arguments(goal,plan,run,step,{'error':'missing_required_argument','argument':'connector_id'})
-                    else:
-                        value={'connector_id':cid,'capabilities':agent.connectors.capabilities(cid)};obs=ToolObservation(True,step.preferred_tool,value,{'verified':bool(value['capabilities']),'method':'typed connector descriptor reread','connector_id':cid})
-                elif step.preferred_tool=='connector_health' and agent.connectors is not None:
-                    cid=str(step.arguments.get('connector_id',''))
-                    if not cid:
-                        return agent._block_invalid_arguments(goal,plan,run,step,{'error':'missing_required_argument','argument':'connector_id'})
-                    else:
-                        value=agent.connectors.health(cid,owner_user_id=goal.user_id);obs=ToolObservation(True,step.preferred_tool,value,{'verified':value.get('connector_id')==cid and value.get('owner_user_id')==goal.user_id,'method':'connector adapter health recheck or explicit unavailable state','connector_id':cid})
-                elif step.preferred_tool in {'connector_read','connector_invoke'} and agent.connectors is not None:
-                    cid=str(step.arguments.get('connector_id',''));op=str(step.arguments.get('operation',''));args=dict(step.arguments.get('arguments') or {});classification=str(step.arguments.get('classification','PRIVATE'));device_id=step.arguments.get('device_id');approval=agent._approval_for(goal_id,step.step_id) if step.preferred_tool=='connector_invoke' else None
-                    try:
-                        fn=agent.connectors.invoke_read if step.preferred_tool=='connector_read' else agent.connectors.invoke
-                        value=fn(cid,op,args,owner_user_id=goal.user_id,goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,classification=classification,approval=approval,device_id=device_id);verified=bool((value.get('verification') or {}).get('verified'));obs=ToolObservation(verified,step.preferred_tool,value,value.get('verification') or {'verified':False,'reason':'connector_verification_missing'})
-                        agent.store.event(goal_id,'connector_invoked',{'connector_id':cid,'operation':op,'request_id':value.get('request_id'),'status':value.get('status'),'verified':verified},now());agent.traces.record('connector',cid,str(value.get('status','FAILED')),goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id,'request_id':value.get('request_id')},detail={'operation':op,'verified':verified,'read_only':step.preferred_tool=='connector_read'})
-                    except Exception as exc:
-                        obs=ToolObservation(False,step.preferred_tool,{'error':'connector_invocation_failed','error_type':type(exc).__name__},{'verified':False,'method':'connector manager policy/authorization/invocation/verification boundary','reason':str(getattr(exc,'category',type(exc).__name__))})
-                elif step.preferred_tool in {'notification_inspect','notification_explain'} and agent.notifications is not None:
-                    nid=str(step.arguments.get('notification_id',''))
-                    if not nid:
-                        return agent._block_invalid_arguments(goal,plan,run,step,{'error':'missing_required_argument','argument':'notification_id'})
-                    else:
-                        value=agent.notifications.inspect(nid,owner_user_id=goal.user_id) if step.preferred_tool=='notification_inspect' else agent.notifications.explain(nid,owner_user_id=goal.user_id);obs=ToolObservation(True,step.preferred_tool,value,{'verified':True,'method':'persisted owner-scoped notification intelligence reread','notification_id':nid})
-                elif step.preferred_tool=='notification_delivery_inspect' and agent.notification_delivery is not None:
-                    value=agent.notification_delivery.inspect(owner_user_id=goal.user_id,notification_id=step.arguments.get('notification_id'),attempt_id=step.arguments.get('attempt_id'));obs=ToolObservation(True,step.preferred_tool,value,{'verified':True,'method':'persisted owner-scoped delivery state reread'})
-                elif step.preferred_tool=='notification_channels_inspect' and agent.notification_delivery is not None:
-                    value={'channels':agent.notification_delivery.channel_states(goal.user_id)};obs=ToolObservation(True,step.preferred_tool,value,{'verified':True,'method':'persisted owner-scoped channel state reread'})
-                elif step.preferred_tool=='notification_delivery_retry' and agent.notification_delivery is not None:
-                    attempt_id=str(step.arguments.get('attempt_id',''));value=agent.notification_delivery.retry(attempt_id,owner_user_id=goal.user_id);reread=agent.store.notification_delivery_attempt(value['attempt_id']);verified=bool(reread and reread.get('notification_id')==value.get('notification_id'));obs=ToolObservation(verified,step.preferred_tool,reread or value,{'verified':verified,'method':'authorized retry + persisted delivery reread','attempt_id':value.get('attempt_id')})
-                elif step.preferred_tool=='notification_acknowledge' and agent.notification_delivery is not None:
-                    attempt_id=str(step.arguments.get('attempt_id',''));value=agent.notification_delivery.acknowledge(attempt_id,owner_user_id=goal.user_id);reread=agent.store.notification_delivery_attempt(attempt_id);verified=bool(reread and reread.get('status')=='ACKNOWLEDGED');obs=ToolObservation(verified,step.preferred_tool,reread or value,{'verified':verified,'method':'authorized acknowledgement + persisted delivery reread','attempt_id':attempt_id})
-                elif step.preferred_tool=='operations_snapshot' and agent.operations is not None:
-                    value=agent.operations.invoke(step.arguments,user_id=goal.user_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
-                elif step.preferred_tool.startswith('daily_brief_') and agent.daily_os is not None:
-                    value=agent.daily_os.invoke(step.preferred_tool,step.arguments,user_id=goal.user_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
-                elif step.preferred_tool=='perception_observe' and agent.perception is not None:
-                    robot_id=str(step.arguments.get('robot_id',''));value=agent.perception.observe(robot_id);oid=value.get('observation',{}).get('observation_id');freshness=value.get('freshness',{}).get('state');verified=value.get('status')=='OBSERVED' and freshness=='FRESH' and value.get('fusion',{}).get('status')=='CURRENT';obs=ToolObservation(verified,step.preferred_tool,value,{'verified':verified,'method':'normalized perception + persisted observation + freshness/fusion check','observation_id':oid,'robot_id':robot_id,'freshness':freshness})
-                    if oid:
-                        agent.store.event(goal_id,'perception_observed',{'observation_id':oid,'robot_id':robot_id,'freshness':freshness,'source':value.get('observation',{}).get('source')},now());agent.traces.record('perception','perception_observe','OBSERVED' if verified else 'UNVERIFIED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id,'observation_id':oid,'robot_id':robot_id},detail={'freshness':freshness,'source':value.get('observation',{}).get('source')})
-                elif step.preferred_tool=='ros2_sim_move' and agent.perception is not None:
-                    try:agent.perception.require_fresh('turtle1')
-                    except Exception as exc:obs=ToolObservation(False,step.preferred_tool,{'error':'fresh perception required before simulated movement','error_type':type(exc).__name__},{'verified':False,'reason':'fresh_perception_required'})
-                    else:obs=agent.gen1.invoke(step.preferred_tool,step.arguments)
-                elif step.preferred_tool=='image_generate' and agent.images is not None:
-                    try:
-                        value=agent.images.invoke(step.arguments,user_id=goal.user_id,goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,step_id=step.step_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
-                    except Exception as exc:
-                        obs=ToolObservation(False,step.preferred_tool,{'error':'image_generation_failed','error_type':type(exc).__name__},{'verified':False,'method':'image generation requires routed provider plus independently verified artifact','reason':type(exc).__name__})
-                    if obs.verification.get('verified') and obs.output.get('artifact_id') is not None:
-                        ref='artifact:'+str(obs.output['artifact_id'])
-                        if ref not in run.artifacts:run.artifacts.append(ref)
-                elif step.preferred_tool=='document_ingest' and agent.documents is not None:
-                    value=agent.documents.invoke_ingest(step.arguments,user_id=goal.user_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
-                elif step.preferred_tool=='document_search' and agent.documents is not None:
-                    value=agent.documents.invoke_search(step.arguments,user_id=goal.user_id);obs=ToolObservation(bool(value['verification'].get('verified')),step.preferred_tool,value['output'],value['verification'])
-                elif step.preferred_tool=='workspace_test':
-                    try:
-                        approval=agent._approval_for(goal_id,step.step_id);scope=json.dumps({'user_id':goal.user_id,'goal_id':goal_id,'tool':'workspace_test','arguments':step.arguments},sort_keys=True,separators=(',',':'),ensure_ascii=False)
-                        center,grant=agent._workspace_test_execution_grant(goal,run,step,approval,scope)
-                        if center.authorize(goal.user_id,'workspace_test',scope)!=PermissionEffect.ALLOW:raise PermissionError('workspace_test execution grant authorization failed')
-                        center.revoke(grant.permission_id,actor='workspace_test_consumer');agent.store.event(goal_id,'workspace_test_grant_consumed',{'permission_id':grant.permission_id,'approval_id':approval.approval_id,'step_id':step.step_id},now());agent.traces.record('authorization','workspace_test_grant','CONSUMED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'approval_id':approval.approval_id,'permission_id':grant.permission_id,'step_id':step.step_id},detail={'one_time':True})
-                        trusted_arguments={'project_name':str(step.arguments['project_name']),'approved':True};obs=agent.gen1.invoke(step.preferred_tool,trusted_arguments)
-                    except Exception as exc:
-                        obs=ToolObservation(False,step.preferred_tool,{'error':'workspace_test_authorization_failed','error_type':type(exc).__name__},{'verified':False,'reason':'workspace_test_execution_grant_failed'})
-                else:
-                    obs=agent.gen1.invoke(step.preferred_tool,step.arguments)
-                step.result={'output':obs.output,'verification':obs.verification};agent.store.event(goal_id,'tool_observed',{'tool':step.preferred_tool,'ok':obs.ok},now());agent.traces.record('observation',step.preferred_tool,'OK' if obs.ok else 'FAILED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id})
+                        request=ToolInput(step.preferred_tool,dict(step.arguments),goal.user_id,goal_id,run.task_run_id,step.step_id)
+                        obs=agent.tool_dispatch.invoke(agent,goal,plan,run,step,request=request)
+                except Exception as exc:
+                    transient=isinstance(exc,(TimeoutError,ConnectionError))
+                    obs=ToolObservation(False,step.preferred_tool,{'error':'temporarily_unavailable' if transient else 'execution_failed','error_type':type(exc).__name__},{'verified':False,'method':'execution exception'})
+                finally:
+                    action_elapsed=max(0.0,monotonic()-action_started)
+                    run.active_runtime_seconds+=action_elapsed
+                    agent.controls.apply(goal,run)
+                    agent.store.save_task_run(run)
+                if action_elapsed>step.timeout_seconds:
+                    step.result={'output':obs.output,'verification':obs.verification,'timeout':True}
+                    step.status=StepStatus.BLOCKED;goal.status=GoalStatus.BLOCKED;run.status='ACTION_TIMEOUT'
+                    agent.store.event(goal_id,'action_timeout',{'step_id':step.step_id,'duration':action_elapsed,'limit':step.timeout_seconds},now())
+                    agent._persist(goal,plan,run);return agent.report(goal,plan,run)
+                if not isinstance(obs.output,dict) or not isinstance(obs.verification,dict):
+                    obs=ToolObservation(False,step.preferred_tool,{'error':'invalid_tool_output'},{'verified':False,'reason':'tool_protocol_violation'})
+                obs.verification=agent.verifier.verify(step,obs)
+                error=None if obs.ok else ToolError(str(obs.output.get('error','execution_failed')),'The adapter did not complete the requested action.')
+                step.result={'output':obs.output,'verification':obs.verification,'tool_output':ToolOutput(step.preferred_tool,obs.ok and obs.verification.get('verified') is True and not obs.requires_approval,obs.output,obs.verification,error=error,metadata={'goal_id':goal_id,'task_run_id':run.task_run_id,'step_id':step.step_id}).to_dict()};agent.store.event(goal_id,'tool_observed',{'tool':step.preferred_tool,'ok':obs.ok},now());agent.traces.record('observation',step.preferred_tool,'OK' if obs.ok else 'FAILED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id})
                 if not obs.ok:
                     if isinstance(obs.output,dict) and obs.output.get('error') in {'missing_required_argument','invalid_arguments','unexpected_arguments'}:
                         return agent._block_invalid_arguments(goal,plan,run,step,dict(obs.output))
                     step.status=StepStatus.FAILED
                     if step.step_id not in run.failed_steps:run.failed_steps.append(step.step_id)
-                    decision=agent.failures.classify(obs.output,attempts=step.attempts,retry_limit=step.retry_limit);agent.store.event(goal_id,'failure_classified',decision.to_dict()|{'step_id':step.step_id},now());agent.traces.record('recovery','failure_classifier',decision.action,goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id},detail={'category':decision.category,'retryable':decision.retryable})
+                    decision=agent.failures.classify(obs.output,attempts=step.attempts,retry_limit=step.retry_limit);run.recovery_history.append(decision.to_dict()|{'step_id':step.step_id,'attempt':step.attempts,'created_at':now()});agent.store.event(goal_id,'failure_classified',decision.to_dict()|{'step_id':step.step_id},now());agent.traces.record('recovery','failure_classifier',decision.action,goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id},detail={'category':decision.category,'retryable':decision.retryable})
                     if decision.action=='REPLAN':
                         goal.status=GoalStatus.BLOCKED;run.status='REPLAN';agent._persist(goal,plan,run)
                         if agent._replan_attempts(goal_id)<agent.max_replans:
@@ -359,7 +323,10 @@ class ExecutionLifecycleService:
                             except (PlannerError,PlanValidationError,RuntimeError,ValueError) as exc:
                                 goal=agent.store.load_goal(goal_id);run=agent.store.load_task_run_for_goal(goal_id);goal.status=GoalStatus.BLOCKED;run.status='REPLAN_FAILED';agent.store.event(goal_id,'automatic_replan_failed',{'error_type':type(exc).__name__},now());agent.traces.record('recovery','personal_agent','REPLAN_FAILED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=run.trace_id or trace_id,detail={'error_type':type(exc).__name__});agent._persist(goal,plan,run);return agent.report(goal,plan,run)
                         return agent.report(goal,plan,run)
-                    goal.status=GoalStatus.WAITING if decision.action in {'RETRY','WAIT_USER','WAIT_EXTERNAL'} else GoalStatus.BLOCKED;run.status=decision.action;agent._persist(goal,plan,run);return agent.report(goal,plan,run)
+                    goal.status=GoalStatus.WAITING if decision.action in {'RETRY','WAIT_USER','WAIT_EXTERNAL'} else GoalStatus.BLOCKED;run.status=decision.action;agent._persist(goal,plan,run)
+                    if decision.action=='RETRY' and agent.auto_retry and permission.effect==PermissionEffect.ALLOW and not agent.controls.apply(goal,run):
+                        return agent.resume(goal_id)
+                    return agent.report(goal,plan,run)
                 goal.status=GoalStatus.VERIFYING
                 if not obs.verification.get('verified'):
                     step.status=StepStatus.FAILED;goal.status=GoalStatus.BLOCKED;run.status='BLOCKED';agent.store.event(goal_id,'verification_failed',obs.verification,now());agent.traces.record('verification',step.preferred_tool,'FAILED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id});agent._persist(goal,plan,run);return agent.report(goal,plan,run)
@@ -368,8 +335,11 @@ class ExecutionLifecycleService:
                     if obs.approval_id and obs.approval_id not in run.approvals:run.approvals.append(obs.approval_id)
                     agent.store.event(goal_id,'gen1_approval_required',{'approval_id':obs.approval_id,'tool':step.preferred_tool},now());agent._persist(goal,plan,run);return agent.report(goal,plan,run)
                 step.status=StepStatus.VERIFIED
+                run.failed_steps=[x for x in run.failed_steps if x!=step.step_id]
                 if step.step_id not in run.completed_steps:run.completed_steps.append(step.step_id)
                 run.pending_steps=[x for x in run.pending_steps if x!=step.step_id];agent.store.event(goal_id,'step_verified',{'step_id':step.step_id},now());agent.traces.record('verification',step.preferred_tool,'VERIFIED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id,correlation={'step_id':step.step_id})
+            if agent.controls.apply(goal,run):
+                agent._persist(goal,plan,run);return agent.report(goal,plan,run)
             agent._evaluate_goal(goal,plan)
             if all(c.status==CriterionStatus.SATISFIED for c in agent.store.criteria_for_goal(goal_id)) and all(s.status==StepStatus.VERIFIED for s in plan.steps):
                 goal.status=GoalStatus.COMPLETED;run.status='COMPLETED';run.current_step=None;agent.store.event(goal_id,'goal_completed',{'authority':'deterministic_goal_evaluator'},now());agent.traces.record('goal','deterministic_goal_evaluator','COMPLETED',goal_id=goal_id,task_run_id=run.task_run_id,trace_id=trace_id)
@@ -392,7 +362,9 @@ class ExecutionLifecycleService:
 
     @staticmethod
     def _persist(agent,goal,plan,run):
+            agent.controls.apply(goal,run)
             goal.updated_at=now();run.updated_at=now();agent.store.save_plan(plan);agent.store.save_goal(goal);agent.store.save_task_run(run)
+            agent.graph.execution(goal,plan,run)
 
     @staticmethod
     def report(agent,goal,plan,run):
@@ -499,6 +471,8 @@ class ExecutionLifecycleService:
                 text='Completed and independently verified.'+(' '+ ' '.join(summaries) if summaries else '')
                 proposed=[c for c in memory_candidates if c.state=='PROPOSED']
                 if proposed:text+=f' I found {len(proposed)} useful memory candidate'+('' if len(proposed)==1 else 's')+'; nothing will be stored unless you approve it.'
+            elif run.status=='PAUSED':text='Execution is paused. Verified progress is saved. Resume when ready.'
+            elif goal.status==GoalStatus.CANCELLED:text='Execution is cancelled. Saved observations and verified results remain available.'
             elif pending:text=f"I’m ready to {pending[-1].action.lower()}. This action requires your approval before I continue."
             elif goal.status==GoalStatus.BLOCKED:text='I’m blocked because policy, execution, or verification is unresolved. I did not mark the work complete.'
             else:text='Work is still in progress. Verified progress is saved and can be resumed from any authorized device.'
@@ -512,4 +486,6 @@ class ExecutionLifecycleService:
                         for item in (output.get('provenance',{}) or {}).get('pending_approvals',[]):
                             pending_id=item.get('approval_id') if isinstance(item,dict) else None
                             if isinstance(pending_id,str) and pending_id not in gen1_approvals:gen1_approvals.append(pending_id)
-            return {'goal_id':goal.goal_id,'task_run_id':run.task_run_id,'trace_id':run.trace_id,'status':goal.status.value,'text':text,'checked':checked,'verified':verified,'approvals':[a.approval_id for a in pending],'gen1_approvals':gen1_approvals,'memory_candidates':[c.to_dict() for c in memory_candidates],'delegations':agent.store.delegations(goal_id=goal.goal_id),'model_provenance':agent.store.provenance_for_goal(goal.goal_id),'criteria':[c.to_dict() for c in agent.store.criteria_for_goal(goal.goal_id)]}
+            result={'goal_id':goal.goal_id,'task_run_id':run.task_run_id,'trace_id':run.trace_id,'status':goal.status.value,'run_status':run.status,'artifacts':list(run.artifacts),'resource_usage':{'iterations':run.iterations,'active_runtime_seconds':run.active_runtime_seconds,**run.resource_usage},'text':text,'checked':checked,'verified':verified,'approvals':[a.approval_id for a in pending],'gen1_approvals':gen1_approvals,'memory_candidates':[c.to_dict() for c in memory_candidates],'delegations':agent.store.delegations(goal_id=goal.goal_id),'model_provenance':agent.store.provenance_for_goal(goal.goal_id),'criteria':[c.to_dict() for c in agent.store.criteria_for_goal(goal.goal_id)]}
+            result['agent_result']=AgentResult.from_report(result).to_dict()
+            return result

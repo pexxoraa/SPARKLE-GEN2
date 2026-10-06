@@ -32,19 +32,31 @@ class BackgroundTaskService:
         t.state='QUEUED';t.last_error=None;t.updated_at=now();self.store.save_background_task(t);return t
     def pause(self,bid):
         t=self.store.load_background_task(bid)
-        if t.state not in TERMINAL:t.state='PAUSED';t.updated_at=now();self.store.save_background_task(t)
+        if t.state not in TERMINAL:
+            t.state='PAUSED';t.updated_at=now();self.store.save_background_task(t)
+            controls=getattr(self.agent_factory(),'controls',None)
+            if controls is not None:controls.request(t.goal_id,'PAUSED')
         return t
     def cancel(self,bid):
-        t=self.store.load_background_task(bid);t.state='CANCELLED';t.updated_at=now();self.store.save_background_task(t);return t
+        t=self.store.load_background_task(bid);t.state='CANCELLED';t.updated_at=now();self.store.save_background_task(t)
+        controls=getattr(self.agent_factory(),'controls',None)
+        if controls is not None:controls.request(t.goal_id,'CANCELLED')
+        return t
     def resume(self,bid):
         t=self.store.load_background_task(bid)
         if t.state in TERMINAL:return t
         t.state='RUNNING';t.updated_at=now();self.store.save_background_task(t)
         agent=self.agent_factory()
+        controls=getattr(agent,'controls',None)
+        if controls is not None and controls.state(t.goal_id).get('state')=='PAUSED':controls.request(t.goal_id,'RUNNING')
         while t.iterations<t.max_iterations and t.state=='RUNNING':
+            current=self.store.load_background_task(bid)
+            if current.state in {'PAUSED','CANCELLED'}:t.state=current.state;break
             if t.elapsed_seconds>=t.time_budget_seconds:
                 t.state='PAUSED';t.last_error='time_budget_exhausted';break
             started=self.clock();result=agent.resume(t.goal_id);t.elapsed_seconds+=max(0.0,self.clock()-started);t.iterations+=1;t.updated_at=now()
+            current=self.store.load_background_task(bid)
+            if current.state in {'PAUSED','CANCELLED'}:t.state=current.state;break
             if result['status']=='COMPLETED':t.state='COMPLETED';break
             if result['status']=='BLOCKED':t.state='BLOCKED';break
             if result.get('approvals'):t.state='WAITING_FOR_APPROVAL';break

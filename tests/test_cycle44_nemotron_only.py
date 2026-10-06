@@ -29,14 +29,18 @@ class Cycle44Tests(unittest.TestCase):
  def test_deterministic_bm25_retrieval_is_model_free(self):
   r=DeterministicRetrievalRuntime();docs=[{"id":"b","text":"gardening notes"},{"id":"a","text":"visual slam robotics localization","metadata":{"project":"robotics"}}]
   self.assertEqual(r.retrieve("robotics slam",docs,k=1)[0]["id"],"a")
- def test_non_nemotron_router_decision_is_rejected(self):
+ def test_capable_provider_decision_is_accepted_without_brand_restriction(self):
   from types import SimpleNamespace
+  from sparkle_gen2.models import PlanProposal,PlanProposalStep
+  from dataclasses import asdict
+  proposal=PlanProposal('p','g',[PlanProposalStep('s','Calculate',['calculator'],[],['observed'],{'expression':'2+2'})],[{'description':'observed','verification_method':'all_steps_verified'}],'LOW',.9,[],'test')
   class Router:
    def complete(self,*a,**k):
-    return SimpleNamespace(provider="other",model="other/model",capability="reasoning",selection_reason="x",health="HEALTHY",fallback=False),SimpleNamespace(text="{}",provider_request_id="r")
+    return SimpleNamespace(provider='other',model='other/model',capability='reasoning',selection_reason='capability_match',health='HEALTHY',fallback=False),SimpleNamespace(text=json.dumps(asdict(proposal)),provider_request_id='r')
   g=LocalGen1Gateway.__new__(LocalGen1Gateway);g.system=SimpleNamespace(model_router=Router())
-  goal={"goal_id":"g","user_request":"x","constraints":[],"deadline":None}
-  with self.assertRaisesRegex(RuntimeError,"nemotron_only_route_violation"):g.plan(goal,{"rendered":""},["calculator"])
+  goal={'goal_id':'g','user_request':'calculate 2+2','constraints':[],'deadline':None}
+  result=g.plan(goal,{'rendered':''},['calculator'])
+  self.assertEqual(result['provenance']['provider'],'other');self.assertEqual(result['proposal']['steps'][0]['required_capabilities'],['calculator'])
  def test_planning_failure_executes_zero_tools(self):
   from types import SimpleNamespace
   from sparkle_gen2.core import PersonalAgent

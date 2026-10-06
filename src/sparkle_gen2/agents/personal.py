@@ -19,9 +19,16 @@ from ..permission_center import PermissionCenter
 from ..storage import Gen2Store
 from ..validation import PlanValidationError,PlanValidator
 from ..application.execution.approval_service import ApprovalService
+from ..application.execution.run_controls import RunControlService
+from ..domain.contracts.tool_protocol import input_errors
+from ..application.personal_os.graph import PersonalGraphService
+from ..application.system.tool_system import CapabilityCatalog
+from ..application.execution.tool_dispatch import ExecutionToolDispatcher
+from ..application.execution.verification import StepVerifier
+from ..application.execution.budgets import ResourceBudget
 
 class PersonalAgent:
-    def __init__(self,store:Gen2Store,gen1:Gen1Gateway,*,planner:PlannerModel|None=None,policy:PolicyEngine|None=None,context_provider=None,connector_manager=None,document_service=None,image_service=None,perception_service=None,daily_os_service=None,operations_service=None,notification_service=None,learning_service=None,tracer=None,max_iterations:int=12,planner_retries:int=1,max_replans:int=1):
+    def __init__(self,store:Gen2Store,gen1:Gen1Gateway,*,planner:PlannerModel|None=None,policy:PolicyEngine|None=None,context_provider=None,connector_manager=None,document_service=None,image_service=None,perception_service=None,operations_service=None,daily_os_service=None,notification_service=None,learning_service=None,tracer=None,max_iterations:int=12,planner_retries:int=1,max_replans:int=1,auto_retry:bool=False,max_runtime_seconds:float=300.0):
         if not 1<=max_iterations<=100:raise ValueError('max_iterations out of range')
         if not 0<=planner_retries<=2:raise ValueError('planner_retries out of range')
         if not 0<=max_replans<=3:raise ValueError('max_replans out of range')
@@ -30,6 +37,12 @@ class PersonalAgent:
         self._execution_health_cache_at=0.0
         self._execution_health_ttl=5.0
         self.approvals=ApprovalService(store,traces=self.traces)
+        self.controls=RunControlService(store)
+        self.graph=PersonalGraphService(store)
+        self.capabilities=CapabilityCatalog();self.tool_dispatch=ExecutionToolDispatcher();self.verifier=StepVerifier()
+        if not 0<float(max_runtime_seconds)<=86400:raise ValueError('max_runtime_seconds out of range')
+        self.auto_retry=bool(auto_retry)
+        self.max_runtime_seconds=float(max_runtime_seconds)
         from ..application.execution.lifecycle_service import ExecutionLifecycleService
         self.execution=ExecutionLifecycleService()
         self.automation=AutomationOrchestrator(store,gen1,lambda:self) if AutomationOrchestrator.available(gen1) else None
@@ -46,6 +59,7 @@ class PersonalAgent:
             base=dict(self.gen1.health())
             self._execution_health_cache=dict(base)
             self._execution_health_cache_at=stamp
+        base['native_tools']=list(base.get('tools',[]))
         tools=list(base.get('tools',[]));definitions=list(base.get('tool_definitions',[]))
         if self.delegation.available() and 'specialist_delegate' not in tools:
             tools.append('specialist_delegate');definitions.append({'name':'specialist_delegate','description':'Delegate bounded read-only analysis to certified Gen-1 specialists. Specialists are explicit, unique, allowlisted, and retain Gen-1 tool restrictions.','parameters':{'type':'object','properties':{'specialists':{'type':'array','items':{'type':'string'},'minItems':1},'objective':{'type':'string'},'inputs':{'type':'object'},'constraints':{'type':'array','items':{'type':'string'}},'required_evidence':{'type':'array','items':{'type':'string'}},'authorized_action':{'type':'object','properties':{'tool':{'type':'string'},'arguments':{'type':'object'}},'required':['tool','arguments'],'additionalProperties':False}},'required':['specialists','objective'],'additionalProperties':False}})
@@ -109,10 +123,34 @@ class PersonalAgent:
             ]
             for d in auto_defs:
                 if d['name'] not in tools:tools.append(d['name']);definitions.append(d)
-        base['tools']=sorted(set(tools));base['tool_definitions']=definitions;return base
+        base['tools']=sorted(set(tools));base['tool_definitions']=definitions
+        self.capabilities=CapabilityCatalog.from_health(base,self.policy,timestamp=now(),agent_ids=tuple(x['agent_id'] for x in self.agent_registry.list()))
+        base['capability_registry']=self.capabilities.definitions()
+        return base
     def invalidate_execution_health_cache(self):
         self._execution_health_cache=None
         self._execution_health_cache_at=0.0
+
+    def _propose(self,goal,context,capabilities,run):
+        usage=ResourceBudget.usage(self.store.task_runs_for_goal(goal.goal_id))
+        limits={'planning_calls':8,'runtime_seconds':self.max_runtime_seconds}
+        configured=(goal.metadata or {}).get('resource_limits') or {}
+        for key in ('planning_calls','reported_tokens'):
+            if key in configured:limits[key]=min(float(configured[key]),limits.get(key,float('inf')))
+        if 'reported_tokens' in limits:usage['reported_tokens']=None
+        decision=ResourceBudget(limits).check(usage,reservations={'planning_calls':1})
+        if not decision['allowed']:raise PlanValidationError('planning_budget:'+decision['reason']+':'+decision['resource'])
+        run.resource_usage['planning_calls']=int(run.resource_usage.get('planning_calls',0))+1
+        self.store.save_task_run(run);started=monotonic()
+        try:
+            proposal,provenance=self.planner.propose(goal,context,capabilities)
+            tokens=provenance.resource_usage
+            total=tokens.get('total_tokens')
+            if total is None and tokens:total=sum(tokens.get(k,0) for k in ('input_tokens','output_tokens','prompt_tokens','completion_tokens'))
+            if total is not None:run.resource_usage['reported_tokens']=int(run.resource_usage.get('reported_tokens',0))+int(total)
+            return proposal,provenance
+        finally:
+            run.active_runtime_seconds+=max(0.0,monotonic()-started);run.updated_at=now();self.store.save_task_run(run)
 
     @staticmethod
     def _schema_argument_error(step,schemas):
@@ -140,6 +178,9 @@ class PersonalAgent:
             extras=sorted(set(args)-set(properties))
             if extras:
                 return {'error':'unexpected_arguments','arguments':extras}
+        invalid=input_errors(args,parameters)
+        if invalid:
+            return {'error':'invalid_arguments','reason':'tool schema validation failed','fields':invalid}
         return None
 
     def _validate_plan_arguments(self,plan,schemas,goal=None):
@@ -179,8 +220,14 @@ class PersonalAgent:
         self.traces.record('validation',step.preferred_tool,'BLOCKED',goal_id=goal.goal_id,task_run_id=run.task_run_id,trace_id=run.trace_id,correlation={'step_id':step.step_id},detail=error)
         self._persist(goal,plan,run)
         return self.report(goal,plan,run)
-    def start(self, request, *, user_id='user', target_device_id=None, target_device_kind=None):
-        return self.execution.start(self, request, user_id=user_id, target_device_id=target_device_id, target_device_kind=target_device_kind)
+    def start(self, request, *, user_id='user', target_device_id=None, target_device_kind=None,agent_id='personal'):
+        profile=self.agent_registry.resolve(agent_id)
+        return self.execution.start(self, request, user_id=user_id, target_device_id=target_device_id, target_device_kind=target_device_kind,agent_profile=profile.to_dict())
+    def respond(self, request):
+        from .base import AgentResponse,AgentResult
+        agent_id=request.metadata.get('agent_id','personal')
+        report=self.start(request.text,user_id=request.user_id,agent_id=agent_id)
+        return AgentResponse(report['text'],report['status'],agent_id,AgentResult.from_report(report).to_dict())
     def _replan_attempts(self,goal_id):return sum(1 for e in self.store.events(goal_id) if e['event_type']=='replan_attempted')
     def replan(self, goal_id):
         return self.execution.replan(self, goal_id)
@@ -203,11 +250,26 @@ class PersonalAgent:
         return ApprovalService.deadline_expired(deadline)
     def cancel(self, goal_id):
         return self.execution.cancel(self, goal_id)
+    def pause(self, goal_id):
+        goal=self.store.load_goal(goal_id)
+        if goal.status in {GoalStatus.COMPLETED,GoalStatus.CANCELLED}:raise ValueError('terminal goal cannot be paused')
+        plan=self.store.load_plan(goal.plan_id);run=self.store.load_task_run_for_goal(goal_id)
+        self.controls.request(goal_id,'PAUSED')
+        self._persist(goal,plan,run)
+        self.store.event(goal_id,'execution_paused',{},now())
+        return self.report(goal,plan,run)
+    def unpause(self, goal_id):
+        goal=self.store.load_goal(goal_id)
+        if goal.status==GoalStatus.CANCELLED:raise ValueError('cancelled goal cannot resume')
+        self.controls.request(goal_id,'RUNNING')
+        self.store.event(goal_id,'execution_resumed',{},now())
+        return self.resume(goal_id)
     def resume(self, goal_id):
-        return self.execution.resume(self, goal_id)
+        return self.controls.execute(self,goal_id,lambda:self.execution.resume(self,goal_id))
     def _analyze_completion_memory(self,goal,run):
         before={c.candidate_id for c in self.memory.list(goal.goal_id)};items=self.memory.analyze_completion(goal,run,self.store.criteria_for_goal(goal.goal_id))
         for candidate in items:
+            self.graph.memory(candidate)
             if candidate.candidate_id in before:continue
             self.store.event(goal.goal_id,'memory_candidate_proposed',{'candidate_id':candidate.candidate_id,'category':candidate.category,'privacy':candidate.privacy_classification},now());self.traces.record('memory','completion_memory','PROPOSED',goal_id=goal.goal_id,task_run_id=run.task_run_id,trace_id=run.trace_id,correlation={'candidate_id':candidate.candidate_id},detail={'category':candidate.category,'privacy':candidate.privacy_classification})
         return items

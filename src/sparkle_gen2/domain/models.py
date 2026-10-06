@@ -33,6 +33,7 @@ class PlanProposalStep:
     step_id:str; objective:str; required_capabilities:list[str]; depends_on:list[str]
     success_criteria:list[str]; arguments:dict[str,Any]=field(default_factory=dict)
     timeout_seconds:int=30; retry_limit:int=1
+    verification:dict[str,Any]=field(default_factory=dict)
 
 @dataclass(slots=True)
 class PlanProposal:
@@ -44,6 +45,7 @@ class PlanProposal:
 class ModelProvenance:
     request_id:str; provider:str; model:str; capability:str; requested_capabilities:list[str]
     selection_reason:str; health:str; trace_id:str|None=None; fallback:bool=False
+    resource_usage:dict[str,Any]=field(default_factory=dict)
     def to_dict(self): return asdict(self)
 
 @dataclass(slots=True)
@@ -53,6 +55,8 @@ class PlanStep:
     timeout_seconds:int; retry_limit:int; success_criteria:list[str]; verification_method:str
     rollback_strategy:str|None; arguments:dict[str,Any]=field(default_factory=dict)
     status:StepStatus=StepStatus.PENDING; attempts:int=0; result:dict[str,Any]|None=None
+    verification_strategy:dict[str,Any]=field(default_factory=dict)
+    preferred_agent:str='personal'
     def to_dict(self):
         d=asdict(self); d['status']=self.status.value; return d
 
@@ -69,6 +73,10 @@ class TaskRun:
     pending_steps:list[str]; artifacts:list[str]; approvals:list[str]; events:list[dict[str,Any]]
     started_at:str; updated_at:str; deadline:str|None; status:str
     trace_id:str|None=None
+    iterations:int=0
+    active_runtime_seconds:float=0.0
+    resource_usage:dict[str,Any]=field(default_factory=dict)
+    recovery_history:list[dict[str,Any]]=field(default_factory=list)
     def to_dict(self): return asdict(self)
 
 @dataclass(slots=True)

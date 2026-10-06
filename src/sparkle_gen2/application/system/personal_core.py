@@ -11,13 +11,16 @@ from sparkle_gen2.device_identity import DeviceIdentityService
 from sparkle_gen2.device_routing import DeviceRouter
 from sparkle_gen2.application.knowledge.multimodal import MultimodalGateway
 from sparkle_gen2.notifications import NotificationIntelligenceService
-from sparkle_gen2.voice_runtime import VoiceSessionService
+from sparkle_gen2.voice_runtime import VoiceSessionService,VoiceInputFrame
 from sparkle_gen2.core_time import now
 from sparkle_gen2.domain.models import Goal, GoalStatus
+from ..personal_os.inspector import PersonalOSInspector
+from ..personal_os.workflows import PersonalOSWorkflowService
+from ..personal_os.graph import PersonalGraphService
 
 class PersonalCore:
     def __init__(self,components=None):
-        self.store,self.agent,self.sessions=components or build_components(activate_external_connectors=True);self.devices=DeviceIdentityService(self.store);self.router=DeviceRouter(self.devices);self.notifications=getattr(self.agent,'notifications',None) or NotificationIntelligenceService(self.store);self.delivery=getattr(self.notifications,'delivery',None);self.conversations=ConversationService(self.store,self.sessions,self.agent);self.voice=VoiceSessionService(self.store,model_manager=getattr(self.agent.gen1,'model_manager',None),conversation_service=self.conversations);self.multimodal=MultimodalGateway();self.background=BackgroundTaskService(self.store,lambda:self.agent,notifier=self.notifications);self.autonomy=AutonomyController(self.store);self.operations=self.agent.operations
+        self.store,self.agent,self.sessions=components or build_components(activate_external_connectors=True);self.devices=DeviceIdentityService(self.store);self.router=DeviceRouter(self.devices);self.notifications=getattr(self.agent,'notifications',None) or NotificationIntelligenceService(self.store);self.delivery=getattr(self.notifications,'delivery',None);self.conversations=ConversationService(self.store,self.sessions,self.agent);self.voice=VoiceSessionService(self.store,model_manager=getattr(self.agent.gen1,'model_manager',None),conversation_service=self.conversations);self.multimodal=MultimodalGateway();self.background=BackgroundTaskService(self.store,lambda:self.agent,notifier=self.notifications);self.autonomy=AutonomyController(self.store);self.operations=self.agent.operations;self.inspector=PersonalOSInspector(self)
     @staticmethod
     def _voice_payload(response):
         value=response.to_dict(include_audio=False)
@@ -68,7 +71,7 @@ class PersonalCore:
         manual_projects=self.store.os_records(owner_user_id=owner_user_id,record_type='project',limit=50)
         manual_research=self.store.os_records(owner_user_id=owner_user_id,record_type='research',limit=50)
         manual_skills=self.store.os_records(owner_user_id=owner_user_id,record_type='skill',limit=100)
-        task_goals=[g for g in all_goals if 'task_capture' in set(g.get('constraints') or []) and not ConversationService._looks_like_accidental_task_capture(str(g.get('normalized_objective') or g.get('user_request') or ''))]
+        task_goals=[g for g in all_goals if g.get('user_id','user')==owner_user_id and 'task_capture' in set(g.get('constraints') or []) and not ConversationService._looks_like_accidental_task_capture(str(g.get('normalized_objective') or g.get('user_request') or ''))]
         goals=[g for g in all_goals if self._visible_operational_goal(g) and 'task_capture' not in set(g.get('constraints') or [])]
         task_goal_ids={g.get('goal_id') for g in task_goals}
         runs=[r for r in self.store.all_task_runs(100) if r.get('goal_id') in task_goal_ids]
@@ -78,7 +81,7 @@ class PersonalCore:
             g=goal_map.get(r.get('goal_id'),{});captured=r.get('status')=='CAPTURED' or any(isinstance(x,dict) and x.get('type')=='task_capture' for x in r.get('events',[]));total=len(r.get('completed_steps',[]))+len(r.get('pending_steps',[]))+len(r.get('failed_steps',[]));tasks.append({'task_run_id':r.get('task_run_id'),'goal_id':r.get('goal_id'),'title':str(g.get('normalized_objective') or g.get('user_request',''))[:240],'status':g.get('status',r.get('status')),'run_status':r.get('status'),'progress':100 if r.get('status')=='COMPLETED' else round(100*len(r.get('completed_steps',[]))/max(1,total)),'current_operation':r.get('current_step'),'updated_at':r.get('updated_at'),'task_capture':captured,'priority':g.get('priority',5),'deadline':g.get('deadline'),'metadata':dict(g.get('metadata') or {})})
         learning=self.agent.learning
         plans=[] if learning is None else [x.to_dict() if hasattr(x,'to_dict') else dict(x) for x in learning.list(owner_user_id=owner_user_id,limit=50)]
-        experiments=self.store.experiments()
+        experiments=[e for e in self.store.experiments() if e.get('owner_user_id','user')==owner_user_id]
         project_ids=list(dict.fromkeys([x.get('record_id') for x in manual_projects]+[x.get('project_id') for x in experiments if x.get('project_id')]))
         research=manual_research+[x for x in experiments if x.get('research_id') or x.get('project_id')]
         skills=list(manual_skills)
@@ -93,22 +96,7 @@ class PersonalCore:
             projects.append({'record_id':x,'project_id':x,'owner_user_id':owner_user_id,'record_type':'project','title':x,'experiment_count':sum(e.get('project_id')==x for e in experiments),'status':'PERSISTED'})
         for x in projects:
             x.setdefault('experiment_count',sum(e.get('project_id')==x.get('record_id',x.get('project_id')) for e in experiments))
-        graph_nodes=[{'id':g.get('goal_id'),'type':'goal','title':g.get('normalized_objective'),'status':g.get('status')} for g in goals]
-        graph_edges=[]
-        for t in tasks:
-            if t.get('goal_id'):graph_nodes.append({'id':t['goal_id'],'type':'task','title':t.get('title'),'status':t.get('status')});graph_edges.append({'from':t['goal_id'],'to':t['goal_id'],'type':'execution'})
-        for p in projects:
-            graph_nodes.append({'id':p.get('record_id'),'type':'project','title':p.get('title'),'status':p.get('status')});rel=p.get('goal_id') or (p.get('metadata') or {}).get('goal_id')
-            if rel:graph_edges.append({'from':p.get('record_id'),'to':rel,'type':'supports'})
-        for r in research:
-            rid=r.get('record_id') or r.get('research_id');graph_nodes.append({'id':rid,'type':'research','title':r.get('title') or r.get('topic'),'status':r.get('status') or r.get('verification_state')});rel=r.get('project_id') or (r.get('metadata') or {}).get('project_id')
-            if rid and rel:graph_edges.append({'from':rid,'to':rel,'type':'part_of'})
-        for sk in manual_skills:
-            sid=sk.get('record_id');graph_nodes.append({'id':sid,'type':'skill','title':sk.get('title') or sk.get('name'),'status':sk.get('status')});rel=sk.get('learning_plan_id') or (sk.get('metadata') or {}).get('learning_plan_id')
-            if sid and rel:graph_edges.append({'from':sid,'to':rel,'type':'developed_by'})
-            rel=sk.get('project_id') or (sk.get('metadata') or {}).get('project_id')
-            if sid and rel:graph_edges.append({'from':sid,'to':rel,'type':'applied_in'})
-        graph={'nodes':graph_nodes[:300],'edges':graph_edges[:500]}
+        graph=self.inspector.graph_snapshot(owner_user_id)
         return {'goals':goals[:50],'tasks':tasks[:100],'learning_plans':plans[:50],'skills':skills[:100],'projects':projects[:50],'research':research[:50],'progress':progress,'settings':settings,'graph':graph}
     @staticmethod
     def _os_text(value,field,limit=500):
@@ -128,7 +116,8 @@ class PersonalCore:
         goal.priority=priority;goal.deadline=(str(deadline).strip() or None) if deadline is not None else None
         goal.metadata=dict(metadata or {})
         goal.updated_at=now();self.store.save_goal(goal)
-        return self.task_view_for_goal(goal.goal_id)
+        PersonalGraphService(self.store).execution(goal)
+        return self.task_view_for_goal(goal.goal_id,owner_user_id=owner_user_id)
 
     def update_manual_goal(self,goal_id,fields,*,owner_user_id='user'):
         goal=self.store.load_goal(goal_id)
@@ -152,6 +141,7 @@ class PersonalCore:
         if 'metadata' in fields and isinstance(fields['metadata'],dict):
             goal.metadata=dict(goal.metadata or {})|dict(fields['metadata'])
         goal.updated_at=now();self.store.save_goal(goal)
+        PersonalGraphService(self.store).execution(goal)
         self.store.event(goal.goal_id,'goal_updated',{'source':'manual_os_ui','fields':sorted(fields.keys())},goal.updated_at)
         return goal.to_dict()
 
@@ -161,8 +151,8 @@ class PersonalCore:
         if 'task_capture' not in set(goal.constraints or []):raise ValueError('not_a_manual_task')
         return self.update_manual_goal(goal_id,fields,owner_user_id=owner_user_id)
 
-    def task_view_for_goal(self,goal_id):
-        return next((x for x in self.task_view() if x.get('goal_id')==goal_id), {'goal_id':goal_id,'status':'WAITING'})
+    def task_view_for_goal(self,goal_id,*,owner_user_id='user'):
+        return next((x for x in self.task_view(owner_user_id=owner_user_id) if x.get('goal_id')==goal_id), {'goal_id':goal_id,'status':'WAITING'})
 
     def create_manual_goal(self,title,*,description='',priority=5,deadline=None,owner_user_id='user'):
         import uuid
@@ -174,12 +164,15 @@ class PersonalCore:
         if description:request+=' — '+description
         goal=Goal(uuid.uuid4().hex,request,title,constraints=['goal_capture','manual_entry'],priority=priority,deadline=(str(deadline).strip() or None) if deadline is not None else None,success_criteria=['Goal remains explicitly saved in Personal Goals'],status=GoalStatus.CREATED,created_at=stamp,updated_at=stamp,user_id=owner_user_id)
         self.store.save_goal(goal);self.store.event(goal.goal_id,'goal_captured',{'source':'manual_os_ui','user_id':owner_user_id},stamp)
+        PersonalGraphService(self.store).execution(goal)
         return {'status':'COMPLETED','goal':goal.to_dict(),'goal_id':goal.goal_id,'text':f'Added goal: {title}.','verified':['goal persisted']}
 
     def create_manual_learning(self,subject,objective,units,*,owner_user_id='user'):
         if self.agent.learning is None:raise RuntimeError('learning_unavailable')
         clean_units=[self._os_text(x,'learning unit',180) for x in units if isinstance(x,str) and x.strip()]
-        return {'status':'COMPLETED','plan':self.agent.learning.create(owner_user_id=owner_user_id,subject=self._os_text(subject,'subject',160),objective=self._os_text(objective,'objective',500),units=clean_units).to_dict(),'text':'Learning plan created and persisted.'}
+        plan=self.agent.learning.create(owner_user_id=owner_user_id,subject=self._os_text(subject,'subject',160),objective=self._os_text(objective,'objective',500),units=clean_units)
+        PersonalGraphService(self.store).record(plan.to_dict())
+        return {'status':'COMPLETED','plan':plan.to_dict(),'text':'Learning plan created and persisted.'}
 
     def save_manual_record(self,record_type,title,*,description='',status='ACTIVE',metadata=None,owner_user_id='user'):
         import uuid
@@ -189,6 +182,7 @@ class PersonalCore:
         stamp=now();rid=rtype+'_'+uuid.uuid4().hex
         payload={'record_id':rid,'owner_user_id':owner_user_id,'record_type':rtype,'title':title,'name':title,'description':description,'status':str(status or 'ACTIVE').upper(),'created_at':stamp,'updated_at':stamp,'metadata':dict(metadata or {})}
         self.store.save_os_record(payload)
+        PersonalGraphService(self.store).record(payload)
         return payload
 
     def update_manual_record(self,record_id,fields,*,owner_user_id='user'):
@@ -201,30 +195,14 @@ class PersonalCore:
                 row[key]=str(value).strip()[:1000]
             elif key=='status':row[key]=str(value).upper()[:80]
             elif key=='metadata' and isinstance(value,dict):row[key]=dict(value)
-        row['updated_at']=now();self.store.save_os_record(row);return row
+        row['updated_at']=now();self.store.save_os_record(row);PersonalGraphService(self.store).record(row);return row
 
     def delete_manual_record(self,record_id,*,owner_user_id='user'):
         self.store.delete_os_record(record_id,owner_user_id=owner_user_id)
         return {'status':'DELETED','record_id':record_id}
 
     def plan_os_item(self,record_type,record_id,*,owner_user_id='user'):
-        row=None
-        if record_type in {'project','research','skill'}:row=self.store.load_os_record(record_id)
-        elif record_type=='goal':row=self.store.load_goal(record_id).to_dict()
-        elif record_type=='task':
-            row=next((x for x in self.task_view() if x.get('goal_id')==record_id),None)
-        elif record_type=='learning':
-            row=self.store.load_learning_plan(record_id).to_dict()
-        if row is None:raise KeyError(record_id)
-        if row.get('owner_user_id','user')!=owner_user_id and record_type not in {'goal','task'}:raise PermissionError('os_item_owner_mismatch')
-        title=str(row.get('title') or row.get('name') or row.get('subject') or row.get('objective') or row.get('goal') or record_id)
-        context=str(row.get('description') or row.get('question') or row.get('hypothesis') or row.get('objective') or '')
-        command='Create a goal for '+title+' and plan it carefully.'
-        if context:command+=' Context: '+context[:700]
-        result=self.agent.start(command,user_id=owner_user_id)
-        if record_type in {'project','research','skill'}:
-            row=self.update_manual_record(record_id,{'goal_id':result.get('goal_id'),'status':'PLANNED'},owner_user_id=owner_user_id)
-        return {'status':result.get('status'),'goal_id':result.get('goal_id'),'task_run_id':result.get('task_run_id'),'text':result.get('text'),'linked_record':row,'planning_result':result}
+        return PersonalOSWorkflowService(self).plan(record_type,record_id,owner_user_id=owner_user_id)
 
     def multimodal_send(self,*,modality,mime_type,data_base64,prompt='',session_id=None,device_id=None):
         if modality not in {'image','audio'}:raise ValueError('personal_core_multimodal_modality_not_supported')
@@ -281,7 +259,7 @@ class PersonalCore:
         scopes=set(scopes or []);out={}
         if 'task_status' in scopes:
             goals=[g for g in self.store.recent_goals(200) if self._visible_operational_goal(g) and 'task_capture' not in set(g.get('constraints') or [])]
-            task_goals=[g for g in self.store.recent_goals(200) if 'task_capture' in set(g.get('constraints') or []) and not ConversationService._looks_like_accidental_task_capture(str(g.get('normalized_objective') or g.get('user_request') or ''))]
+            task_goals=[g for g in self.store.recent_goals(200) if g.get('user_id','user')==owner_user_id and 'task_capture' in set(g.get('constraints') or []) and not ConversationService._looks_like_accidental_task_capture(str(g.get('normalized_objective') or g.get('user_request') or ''))]
             visible_ids={g.get('goal_id') for g in goals}|{g.get('goal_id') for g in task_goals}
             tasks=[r for r in self.store.all_task_runs(200) if r.get('goal_id') in {g.get('goal_id') for g in task_goals}]
             out.update({'goals':goals,'tasks':tasks,'background_tasks':[x.to_dict() for x in self.store.background_tasks()]})
@@ -322,8 +300,8 @@ class PersonalCore:
         self.store.delete_conversation_session(session_id)
         return {'status':'DELETED','session_id':session_id}
 
-    def task_view(self):
-        goals={g['goal_id']:g for g in self.store.recent_goals(200) if 'task_capture' in set(g.get('constraints') or []) and not ConversationService._looks_like_accidental_task_capture(str(g.get('normalized_objective') or g.get('user_request') or ''))};out=[]
+    def task_view(self,*,owner_user_id='user'):
+        goals={g['goal_id']:g for g in self.store.recent_goals(200) if g.get('user_id','user')==owner_user_id and 'task_capture' in set(g.get('constraints') or []) and not ConversationService._looks_like_accidental_task_capture(str(g.get('normalized_objective') or g.get('user_request') or ''))};out=[]
         for run in self.store.all_task_runs(200):
             g=goals.get(run['goal_id'])
             if not g:continue

@@ -58,6 +58,15 @@ class Handler(BaseHTTPRequestHandler):
             if u.path=='/api/operations':
                 self._scope(device,'task_status');q=parse_qs(u.query);day=q.get('day',[None])[0];return self._json(200,self.core.operations_snapshot(device.get('capabilities',[]),owner_user_id='user',day=day))
             if u.path=='/api/tasks':self._scope(device,'task_status');return self._json(200,{'tasks':self.core.task_view()})
+            if u.path=='/api/executions':
+                self._scope(device,'task_status');return self._json(200,self.core.inspector.execution_list())
+            if u.path.startswith('/api/executions/'):
+                self._scope(device,'task_status');return self._json(200,self.core.inspector.execution_detail(u.path.split('/')[3]))
+            if u.path in {'/api/knowledge','/api/memory','/api/automations','/api/activity','/api/graph'}:
+                self._scope(device,'conversation');method={'/api/knowledge':'knowledge','/api/memory':'memory','/api/automations':'automations','/api/activity':'activity','/api/graph':'graph_snapshot'}[u.path]
+                return self._json(200,getattr(self.core.inspector,method)())
+            if u.path=='/api/system':
+                self._scope(device,'task_status');return self._json(200,self.core.operations_snapshot(device.get('capabilities',[])))
             if u.path=='/api/approvals':self._scope(device,'approvals');return self._json(200,{'approvals':[a.to_dict() for a in self.core.store.all_approvals() if a.status.value=='PENDING']})
             if u.path=='/api/notifications':self._scope(device,'notifications');return self._json(200,{'notifications':self.core.notifications.attention('user',limit=100)})
             if u.path=='/api/voice/status':
@@ -192,9 +201,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200,self.core.decide_approval(parts[2],parts[3],owner_user_id='user',actor='device:'+device['device_id']))
             if len(parts)==4 and parts[:2]==['api','background'] and parts[3] in {'pause','resume','retry','cancel'}:
                 self._scope(device,'task_status');fn=getattr(self.core.background,parts[3]);return self._json(200,fn(parts[2]).to_dict())
-            if len(parts)==4 and parts[:2]==['api','tasks'] and parts[3] in {'resume','cancel','replan'}:
+            if len(parts)==4 and parts[:2]==['api','memory'] and parts[3] in {'approve','reject','reconcile'}:
+                self._scope(device,'conversation');self._scope(device,'approvals')
+                return self._json(200,self.core.inspector.memory_decision(parts[2],parts[3],actor='device:'+device['device_id']))
+            if len(parts)==4 and parts[:2]==['api','tasks'] and parts[3] in {'pause','resume','cancel','replan','retry'}:
                 self._scope(device,'task_status')
-                fn=getattr(self.core.agent,parts[3]);return self._json(200,fn(parts[2]))
+                return self._json(200,self.core.inspector.control(parts[2],parts[3]))
             if len(parts)==4 and parts[:2]==['api','tasks'] and parts[3]=='delete':
                 self._scope(device,'task_status');return self._json(200,self.core.delete_task(parts[2],owner_user_id='user'))
             if len(parts)==4 and parts[:2]==['api','goals'] and parts[3]=='delete':

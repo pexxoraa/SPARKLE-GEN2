@@ -1,5 +1,6 @@
 from __future__ import annotations
-import hashlib,json,uuid
+import hashlib,json,uuid,os
+from types import SimpleNamespace
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any,Protocol
@@ -31,10 +32,8 @@ class LocalGen1Gateway:
         if system is None:
             from sparkle.system import SparkleSystem
             from .infrastructure.model_manager import build_gen2_model_registry
-            registry=build_gen2_model_registry(path=Path(__file__).with_name('nemotron_models.json'))
-            active=registry.record(registry.active_id)
-            if active.provider!='nvidia' or 'nemotron' not in active.model_id.lower() or not active.enabled:
-                raise RuntimeError('nemotron_only_registry_violation')
+            configured=os.environ.get('SPARKLE_GEN2_MODEL_REGISTRY')
+            registry=build_gen2_model_registry(path=Path(configured) if configured else Path(__file__).with_name('nemotron_models.json'))
             system=SparkleSystem(model_registry=registry)
         self.system=system
         self._external_workspace_worker=None
@@ -171,6 +170,7 @@ class LocalGen1Gateway:
                 'arguments':{},
                 'timeout_seconds':30,
                 'retry_limit':1,
+                'verification':{},
             }],
             'success_criteria':[{
                 'description':'goal result verified',
@@ -241,13 +241,17 @@ class LocalGen1Gateway:
             'Dependencies must reference earlier or existing step IDs. '
             'Each step must request exactly one capability/tool. '
 
+            'Optional step.verification may specify returned_value, expected_state, http_status, file_exists, database_state, command_result, test_result, or artifact_exists with a path into the independently observed output and expected value where required. Use {} to retain the adapter contract. Never claim an unsupported custom verifier. '
+
             'The model proposes actions only; it cannot grant permission, '
             'approve, execute, verify, or declare completion. '
 
             f'GOAL={json.dumps({k:goal[k] for k in ("goal_id","user_request","constraints","deadline")},ensure_ascii=False)}\\n'
             f'AVAILABLE_CAPABILITIES={json.dumps(sorted(available),ensure_ascii=False)}\\n'
+            f'CAPABILITY_REGISTRY={json.dumps(context.get("capability_registry",[]),ensure_ascii=False,separators=(",",":"))}\\n'
             f'AVAILABLE_TOOL_DEFINITIONS={json.dumps(tool_definitions,ensure_ascii=False,separators=(",",":"))}\\n'
             f'RELEVANT_CONTEXT={json.dumps(str(context.get("rendered",""))[:6000],ensure_ascii=False)}\\n'
+            f'AGENT_PROFILE={json.dumps(goal.get("metadata",{}).get("agent_profile",{}),ensure_ascii=False)}\\n'
             f'OUTPUT_SHAPE={json.dumps(schema,ensure_ascii=False,separators=(",",":"))}'
         )
 
@@ -263,38 +267,20 @@ class LocalGen1Gateway:
             },
         )
 
-        architecture_route=None
-        if getattr(self,'capability_router',None) is not None:
-            architecture_route=self.capability_router.require(
-                ['planning','reasoning'],
-                input_modalities=['text'],
-                output_modalities=['text'],
-            )
-
-        decision,response=self.system.model_router.complete(
-            request,
-            'reasoning',
-            modalities={'text'},
-            latency_policy='deep',
-            max_timeout_seconds=120,
-        )
-
-        if (
-            architecture_route is not None
-            and getattr(
-                decision,
-                'record_id',
-                architecture_route.selected.record_id
-            ) != architecture_route.selected.record_id
-        ):
-            raise RuntimeError('gen2_capability_route_mismatch')
-
-        if (
-            decision.provider!='nvidia'
-            or 'nemotron' not in decision.model.lower()
-            or decision.fallback
-        ):
-            raise RuntimeError('nemotron_only_route_violation')
+        manager=getattr(self,'model_manager',None)
+        if manager is not None:
+            routed=manager.complete(request,['planning','reasoning'],input_modalities=['text'],output_modalities=['text'])
+            selected=routed['route']['selected'];response=routed['response']
+            decision=SimpleNamespace(record_id=selected['record_id'],provider=selected['provider'],model=selected['model_id'],
+                capability='reasoning',selection_reason=routed['provenance']['selection_reason'],health=selected['health'],fallback=routed['provenance']['fallback'])
+        else:
+            # Preserve direct native-router callers while requiring capability agreement when supplied.
+            architecture_route=None
+            if getattr(self,'capability_router',None) is not None:
+                architecture_route=self.capability_router.require(['planning','reasoning'],input_modalities=['text'],output_modalities=['text'])
+            decision,response=self.system.model_router.complete(request,'reasoning',modalities={'text'},latency_policy='deep',max_timeout_seconds=120)
+            if architecture_route is not None and getattr(decision,'record_id',architecture_route.selected.record_id)!=architecture_route.selected.record_id:
+                raise RuntimeError('gen2_capability_route_mismatch')
 
         text=response.text.strip()
 
@@ -357,6 +343,10 @@ class LocalGen1Gateway:
             'fallback':decision.fallback,
         }
 
+        usage=getattr(response,'usage',{})
+        if hasattr(usage,'to_dict'):usage=usage.to_dict()
+        if isinstance(usage,dict):
+            prov['resource_usage']={k:v for k,v in usage.items() if k in {'input_tokens','output_tokens','prompt_tokens','completion_tokens','total_tokens'} and isinstance(v,int) and not isinstance(v,bool) and v>=0}
         return {'proposal':raw,'provenance':prov}
 
     def approval_status(self,approval_id,tool):

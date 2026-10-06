@@ -77,7 +77,12 @@ class LearningOrchestrator:
         except KeyError:pass
         stamp=now();records=[LearningUnit(self._unit_id(plan_id,t,i),t,updated_at=stamp).to_dict() for i,t in enumerate(normalized)]
         source=self._progress(subject);state=LearningPlanState(plan_id,owner,subject,objective,'ACTIVE',records,source_progress=source,created_at=stamp,updated_at=stamp,provenance={'source':'approved_learning_plan','source_progress_status':source['status'],'curriculum_digest':self._digest(normalized)})
-        self.store.save_learning_plan(state);return state
+        self._persist(state);return state
+    def _persist(self,state):
+        self.store.save_learning_plan(state)
+        from .personal_os.graph import PersonalGraphService
+        PersonalGraphService(self.store).record(state.to_dict())
+
     def get(self,plan_id,*,owner_user_id):
         state=self.store.load_learning_plan(str(plan_id))
         if state.owner_user_id!=owner_user_id:raise PermissionError('learning_plan_owner_mismatch')
@@ -106,7 +111,7 @@ class LearningOrchestrator:
         elif state.retraining:state.status='NEEDS_RETRAINING'
         else:state.status='ACTIVE'
         state.updated_at=stamp;state.provenance=dict(state.provenance)|{'last_assessment_id':aid,'assessment_policy':{'weak_below':WEAK_THRESHOLD,'mastered_at_or_above':MASTERED_THRESHOLD}}
-        self.store.save_learning_plan(state);return {'plan':state,'assessment':assessment,'reused':False}
+        self._persist(state);return {'plan':state,'assessment':assessment,'reused':False}
     def inspect(self,plan_id,*,owner_user_id):
         state=self.get(plan_id,owner_user_id=owner_user_id)
         return {'plan_id':state.plan_id,'subject':state.subject,'objective':state.objective,'status':state.status,'units':[dict(u) for u in state.units],'weaknesses':list(state.weaknesses),'retraining':[dict(x) for x in state.retraining],'assessment_count':len(state.assessments),'source_progress':dict(state.source_progress),'provenance':dict(state.provenance),'created_at':state.created_at,'updated_at':state.updated_at}

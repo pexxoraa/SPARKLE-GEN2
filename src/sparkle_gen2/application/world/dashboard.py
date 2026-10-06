@@ -48,7 +48,7 @@ class PersonalOperationsService:
         return text
     @staticmethod
     def _safe(value,depth=0):
-        if depth>5:return '[bounded]'
+        if depth>8:return '[bounded]'
         if isinstance(value,dict):
             out={}
             for k,v in value.items():

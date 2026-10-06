@@ -62,12 +62,8 @@ def build_components(*,activate_external_connectors=False):
     store=Gen2Store(data_path())
     base=LocalGen1Gateway()
 
-    engineering_root=Path(
-        os.environ.get(
-            'SPARKLE_GEN2_ENGINEERING_ROOT',
-            _default_engineering_root()
-        )
-    ).resolve()
+    configured_root=os.environ.get('SPARKLE_GEN2_ENGINEERING_ROOT')
+    engineering_root=Path(configured_root).resolve() if configured_root else _default_engineering_root().resolve()
 
     engineering_db=Path(
         os.environ.get(
@@ -180,10 +176,9 @@ def build_components(*,activate_external_connectors=False):
             daily_os_service=daily,
             operations_service=operations,
             notification_service=notifications,
-            learning_service=learning
+            learning_service=learning,
+            auto_retry=True
         ),
         SessionService(store)
     )
-
-
 

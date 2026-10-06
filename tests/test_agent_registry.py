@@ -12,7 +12,7 @@ class AgentRegistryTests(unittest.TestCase):
     def test_agent_and_model_are_separate_concepts(self):
         registry = AgentRegistry()
         research = registry.get('research')
-        self.assertEqual(research.specialist_names, ('researcher',))
+        self.assertEqual(research.specialist_names, ('research',))
         self.assertIn('planning', research.preferred_model_capabilities)
         self.assertNotIn('model_id', research.to_dict())
 

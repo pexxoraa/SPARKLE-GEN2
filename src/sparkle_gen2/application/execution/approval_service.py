@@ -25,9 +25,10 @@ class ApprovalService:
         self.traces = traces
 
     def find_for_step(self, goal_id: str, step_id: str):
+        current_run=self.store.load_task_run_for_goal(goal_id)
         items = [
             a for a in self.store.approvals_for_goal(goal_id)
-            if a.step_id == step_id
+            if a.step_id == step_id and a.task_run_id==current_run.task_run_id
             and a.status in {
                 ApprovalStatus.PENDING,
                 ApprovalStatus.APPROVED,

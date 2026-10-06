@@ -84,7 +84,10 @@ class DocumentIntelligenceService:
         return known.get(ext,mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
     @staticmethod
     def _identity(owner,digest):return 'doc_'+hashlib.sha256(f'{owner}\0{digest}\0{PROCESSING_VERSION}'.encode()).hexdigest()[:32]
-    def _save(self,r):self.store.save_document_record(r)
+    def _save(self,r):
+        self.store.save_document_record(r)
+        from ..personal_os.graph import PersonalGraphService
+        PersonalGraphService(self.store).record(r.to_dict())
     def get(self,document_id,*,user_id):
         r=self.store.load_document_record(document_id)
         if r.owner_user_id!=user_id:raise PermissionError('document owner mismatch')
