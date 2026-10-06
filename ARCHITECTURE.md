@@ -68,6 +68,7 @@ src/sparkle_gen2/
 │   ├── personal_os/            # Tasks/Goals/Projects/Learning/Skills/Research
 │   ├── planning/               # planning feature boundary
 │   ├── execution/              # execution feature boundary
+│   │   └── approval_service.py # human approval and one-time execution grants
 │   ├── knowledge/              # learning/research/memory/retrieval
 │   ├── system/                 # automation/system use cases
 │   ├── learning_orchestration.py
@@ -284,8 +285,8 @@ The redesign is deliberately incremental:
 
 The largest remaining implementation hotspots are:
 
-1. `agents/personal.py` — execution/approval/memory/reporting are still combined.
-2. `interfaces/http_server.py` — PersonalCore and all HTTP routes are still combined.
+1. `agents/personal.py` — execution/lifecycle/memory/reporting are still combined; approval policy is now extracted.
+2. `interfaces/http_server.py` — PersonalCore and feature routes are still combined; transport primitives are now extracted.
 3. `infrastructure/storage.py` — persistence responsibilities need feature repositories.
 4. `infrastructure/model_manager.py` — registry, health, capability routing need separation.
 5. connector/device modules — need grouped infrastructure boundaries.

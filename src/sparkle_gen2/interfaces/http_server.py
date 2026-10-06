@@ -19,6 +19,7 @@ from ..notifications import NotificationIntelligenceService
 from ..voice_runtime import VoiceInputFrame,VoiceSessionService
 from ..core_time import now
 from ..domain.models import Goal,GoalStatus
+from .http.transport import JsonResponder,JsonRequest,DeviceAuthentication,StaticFileService
 
 class PersonalCore:
     def __init__(self,components=None):
@@ -342,86 +343,17 @@ class Handler(BaseHTTPRequestHandler):
     @property
     def core(self):return self.server.core
     def _json(self,status,value,headers=None):
-        raw=json.dumps(value,ensure_ascii=False,separators=(',',':')).encode();self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Referrer-Policy','no-referrer');self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");self.send_header('Content-Length',str(len(raw)));[(self.send_header(k,v)) for k,v in (headers or {}).items()];self.end_headers();self.wfile.write(raw)
+        return JsonResponder.send(self,status,value,headers)
     def _body(self,max_bytes=1_000_000):
-        transfer_encoding = self.headers.get('Transfer-Encoding', '').lower()
-        content_length = self.headers.get('Content-Length')
-
-        if 'chunked' in transfer_encoding:
-            chunks = []
-            total = 0
-
-            while True:
-                line = self.rfile.readline()
-                if not line:
-                    raise ValueError('invalid_chunked_body')
-
-                try:
-                    size_text = line.split(b';', 1)[0].strip()
-                    size = int(size_text, 16)
-                except ValueError:
-                    raise ValueError('invalid_chunk_size')
-
-                if size == 0:
-                    # Consume trailing chunk headers.
-                    while True:
-                        trailer = self.rfile.readline()
-                        if not trailer or trailer in (b'\\r\\n', b'\\n'):
-                            break
-                    break
-
-                total += size
-                if total > max_bytes:
-                    raise ValueError('request_too_large')
-
-                chunk = self.rfile.read(size)
-                if len(chunk) != size:
-                    raise ValueError('incomplete_chunk')
-
-                ending = self.rfile.read(2)
-                if ending != b'\\r\\n':
-                    raise ValueError('invalid_chunk_ending')
-
-                chunks.append(chunk)
-
-            raw = b''.join(chunks)
-
-        else:
-            try:
-                n = int(content_length or '0')
-            except ValueError:
-                raise ValueError('invalid_content_length')
-
-            if n < 0 or n > max_bytes:
-                raise ValueError('request_too_large')
-
-            raw = self.rfile.read(n) if n else b'{}'
-
-            if len(raw) != n:
-                raise ValueError('incomplete_request_body')
-
-        value = json.loads(raw.decode('utf-8'))
-
-        if not isinstance(value, dict):
-            raise ValueError('json_object_required')
-
-        return value
+        return JsonRequest.read(self,max_bytes)
     def _device_token(self):
-        auth=self.headers.get('Authorization','')
-        if auth.startswith('Bearer '):return auth[7:]
-        raw=self.headers.get('Cookie','')
-        if raw:
-            cookie=SimpleCookie();cookie.load(raw);item=cookie.get('sparkle_device')
-            if item and item.value:return item.value
-        raise PermissionError('authentication_required')
+        return DeviceAuthentication.token(self)
     def _device(self):return self.core.devices.authenticate(self._device_token())
     @staticmethod
     def _scope(device,scope):
         if scope not in set(device.get('capabilities',[])):raise PermissionError('device_scope_denied:'+scope)
     def _static(self,path):
-        root=Path(__file__).with_name('web').resolve();name='index.html' if path in {'/','/index.html'} else path.lstrip('/');target=(root/name).resolve()
-        if root not in target.parents or not target.is_file():return False
-        types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'application/javascript; charset=utf-8','.json':'application/json; charset=utf-8','.svg':'image/svg+xml'};raw=target.read_bytes();self.send_response(200);self.send_header('Content-Type',types.get(target.suffix,'application/octet-stream'));self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");self.send_header('Cache-Control','no-cache' if target.name=='index.html' or target.suffix in {'.js','.css'} else 'public, max-age=300');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return True
+        return StaticFileService(Path(__file__).with_name('web')).serve(self,path)
     def do_GET(self):
         u=urlparse(self.path)
         try:
