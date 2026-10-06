@@ -5,8 +5,8 @@ from datetime import UTC,datetime
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
-from .context_engine import ContextItem
-from .retrieval import DeterministicRetrievalRuntime
+from .application.context_engine import ContextItem
+from .application.retrieval import DeterministicRetrievalRuntime
 
 PROCESSING_VERSION='document-intelligence-v2'
 CLASSIFICATIONS=frozenset({'PUBLIC','PRIVATE','SENSITIVE','HIGHLY_SENSITIVE','DEVICE_CONTROL'})

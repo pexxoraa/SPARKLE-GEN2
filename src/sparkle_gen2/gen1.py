@@ -30,7 +30,7 @@ class LocalGen1Gateway:
     def __init__(self,system=None):
         if system is None:
             from sparkle.system import SparkleSystem
-            from .model_manager import build_gen2_model_registry
+            from .infrastructure.model_manager import build_gen2_model_registry
             registry=build_gen2_model_registry(path=Path(__file__).with_name('nemotron_models.json'))
             active=registry.record(registry.active_id)
             if active.provider!='nvidia' or 'nemotron' not in active.model_id.lower() or not active.enabled:
@@ -49,7 +49,7 @@ class LocalGen1Gateway:
             self._strict_workspace_worker=build_strict_workspace_worker(self.system.workspaces.root)
         except Exception:
             self._strict_workspace_worker=None
-        from .model_manager import CapabilityRouter,ModelCapabilityManager
+        from .infrastructure.model_manager import CapabilityRouter,ModelCapabilityManager
         self.model_manager=ModelCapabilityManager(registry=self.system.models,fallback_allowed=False);self.capability_router=CapabilityRouter(self.model_manager)
 
     def bind_engineering_workspace(self,root,path):

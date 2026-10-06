@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC,datetime
 from .core_time import now
-from .models import Permission,PermissionEffect,PermissionStatus
+from .domain.models import Permission,PermissionEffect,PermissionStatus
 
 class PermissionCenter:
     def __init__(self,store,goal_id):self.store=store;self.goal_id=goal_id

@@ -1,6 +1,6 @@
 from __future__ import annotations
 import uuid
-from .models import Permission,PermissionEffect,PermissionStatus,RiskEvaluation,RiskLevel
+from .domain.models import Permission,PermissionEffect,PermissionStatus,RiskEvaluation,RiskLevel
 
 READ_CAPABILITIES={
     'memory_search',

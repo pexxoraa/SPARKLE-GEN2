@@ -5,7 +5,7 @@ from datetime import UTC,datetime,timedelta
 from pathlib import PurePosixPath
 from typing import Any
 from .core_time import now
-from .models import ApprovalStatus
+from .domain.models import ApprovalStatus
 
 GRANTABLE_WRITE_TOOLS=frozenset({'memory_write','workspace_scaffold','workspace_verify','workspace_package'})
 _PROJECT_RE=re.compile(r'^[a-z][a-z0-9_-]{1,63}$')

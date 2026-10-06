@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="description" content="SPARKLE — private personal AI operating system">
   <link rel="manifest" href="/manifest.json">
-  <link rel="stylesheet" href="/app.css?v=11">
+  <link rel="stylesheet" href="/app.css?v=20">
   <title>SPARKLE — Personal AI</title>
 </head>
 <body>
@@ -104,7 +104,7 @@
           <div class="chat-shell">
             <div class="chat-toolbar">
               <div class="chat-context"><span class="status-dot online"></span><div><strong>Conversation workspace</strong><small id="chat-continuity">Choose the intelligence you want for this thread</small></div></div>
-              <div class="chat-controls"><label class="agent-picker"><span>AGENT</span><select id="conversation-model" aria-label="Choose conversation agent"><option value="auto">Auto</option></select></label><select id="session-picker" aria-label="Conversation history"></select><button id="new-session" class="secondary">＋ New</button><button id="delete-session" class="action danger" title="Delete selected conversation history">Delete</button></div>
+              <div class="chat-controls"><label class="agent-picker"><span>AGENT</span><select id="conversation-agent" aria-label="Choose SPARKLE agent"><option value="personal">Personal</option></select></label><label class="model-picker"><span>MODEL</span><select id="conversation-model" aria-label="Choose model"><option value="auto">Auto</option></select></label><select id="session-picker" aria-label="Conversation history"></select><button id="new-session" class="secondary">＋ New</button><button id="delete-session" class="action danger" title="Delete selected conversation history">Delete</button></div>
             </div>
             <div class="thread-strip">
               <div><span class="eyebrow">CURRENT THREAD</span><strong id="chat-thread-focus">New conversation</strong></div>
@@ -155,6 +155,6 @@
     </form>
   </section>
   <div id="toast" class="toast hidden" role="status"></div>
-  <script src="/app.js?v=18" defer></script>
+  <script type="module" src="/app.js?v=20"></script>
 </body>
 </html>

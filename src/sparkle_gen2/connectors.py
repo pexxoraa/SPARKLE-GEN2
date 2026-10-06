@@ -4,7 +4,7 @@ from dataclasses import asdict,dataclass,field
 from enum import Enum
 from typing import Any,Protocol
 from .core_time import now
-from .models import ApprovalStatus,PermissionEffect
+from .domain.models import ApprovalStatus,PermissionEffect
 
 FORBIDDEN_AUTH_FIELDS=frozenset({'approved','approval_id','grant_id','authorization_override','access_token','refresh_token','authorization','cookie','api_key','secret','password','credential'})
 PROTECTED_EXTERNAL=frozenset({'SENSITIVE','HIGHLY_SENSITIVE','DEVICE_CONTROL'})
