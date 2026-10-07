@@ -34,6 +34,8 @@ Persistent background work can be supervised separately with `sparkle-background
 SPARKLE has one Personal Core, one shared session/task state, persistent device identities, capability-scoped synchronization, human approval gates, provider-neutral model routing, independent execution verification, a responsive installable PWA, and a separate persistent background worker. Environment-specific capabilities are overlaid from private runtime configuration/evidence rather than falsely baked into source defaults.
 
 Gen-1 remains the stable execution/model/tool foundation. See `docs/ARCHITECTURE.md`, `docs/PERSONAL_CORE_UI.md`, `docs/SECURITY.md`, and `docs/ACCEPTANCE.md`.
+
+The current [final live acceptance audit](docs/FINAL_LIVE_ACCEPTANCE_2026-10-07.md) maps all 33 functional areas of the supplied 44-section directive to implementation, persistence, integration, UI, tests, fresh live evidence and exact external gates. Earlier audit counts and original-document blockers are historical.
 ## Production-readiness boundary
 
 Gen-2 is prepared for private local operation but is not automatically published or deployed. The authoritative persistent Gen-2 database defaults to `~/.local/share/sparkle-gen2/gen2.sqlite3`; protected provider/device configuration remains under owner-only `~/.config/sparkle/` files and is never copied into the repository. Stop Personal Core/background-worker processes cleanly before filesystem-level backup of the database and private artifact/document roots; preserve owner-only permissions on restored configuration. Schema creation is additive/idempotent at startup and external connections are re-health-checked rather than trusted from persisted state.

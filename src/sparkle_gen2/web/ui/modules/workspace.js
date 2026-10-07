@@ -61,7 +61,7 @@ async function loadWorkspacePage(name){
     if(state.view&&state.view!==name)return;
     const renderers={execution:workspaceExecutions,memory:workspaceMemory,knowledge:workspaceKnowledge,automation:workspaceAutomations,activity:workspaceActivity,system:workspaceSystem};
     el.innerHTML=renderers[name](data,graph);
-  }catch(error){el.innerHTML=workspaceEmpty('Unable to load '+name+': '+error.message);throw error}
+  }catch(error){el.innerHTML=uiLoadState('Unable to load '+name+': '+error.message,name);throw error}
 }
 async function inspectExecution(goalId){
   const data=await api('/api/executions/'+encodeURIComponent(goalId));

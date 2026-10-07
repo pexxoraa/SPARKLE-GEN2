@@ -1,5 +1,7 @@
 # Acceptance
 
+> Current operational acceptance is documented in [FINAL_LIVE_ACCEPTANCE_2026-10-07.md](FINAL_LIVE_ACCEPTANCE_2026-10-07.md). The packaged capability matrix and dated records below retain their certified historical scope. Current account/portal/hardware status, authorized Git publication and final software counts are in the new audit; earlier no-push policies do not apply to this authorized pass.
+
 The executable source of truth is `build_acceptance_matrix()` in `default_acceptance.py`. Tests require every declared capability to be terminally classified as `LIVE_VERIFIED`, `EXTERNALLY_BLOCKED`, or `DEFERRED`; ambiguous states such as PARTIAL are invalid.
 
 ## Verified software/core

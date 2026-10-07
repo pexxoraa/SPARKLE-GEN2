@@ -5,7 +5,7 @@
   for(const name of modules){
     chain=chain.then(()=>new Promise((resolve,reject)=>{
       const script=document.createElement('script');
-      script.src='/ui/modules/'+name+'?v=23';
+      script.src='/ui/modules/'+name+'?v=25';
       script.onload=resolve;
       script.onerror=()=>reject(new Error('Failed to load UI module: '+name));
       document.head.appendChild(script);

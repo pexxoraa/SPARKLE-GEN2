@@ -12,12 +12,21 @@ class EnvironmentGateway:
     """Adds typed Gen-2 environment tools while delegating all Gen-1 behavior unchanged."""
     def __init__(self,base,*,ros2=None):self.base=base;self.ros2=ros2
     @property
+    def system(self):return self.base.system
+    @property
     def model_manager(self):return getattr(self.base,'model_manager',None)
     @property
     def capability_router(self):return getattr(self.base,'capability_router',None)
     def retrieve_context(self,*a,**k):return self.base.retrieve_context(*a,**k)
     def plan(self,*a,**k):return self.base.plan(*a,**k)
     def approval_status(self,*a,**k):return self.base.approval_status(*a,**k)
+    def specialist_catalog(self):return self.base.specialist_catalog()
+    def specialist_limits(self):return self.base.specialist_limits()
+    def delegate_specialists(self,objective,specialists,*,user_id,input_source,authorization=None):
+        return self.base.delegate_specialists(objective,specialists,user_id=user_id,input_source=input_source,authorization=authorization)
+    def package_source_identity(self,*a,**k):return self.base.package_source_identity(*a,**k)
+    def validate_delegated_action_preconditions(self,*a,**k):return self.base.validate_delegated_action_preconditions(*a,**k)
+    def verify_delegated_action(self,*a,**k):return self.base.verify_delegated_action(*a,**k)
     def health(self):
         value=dict(self.base.health());tools=list(value.get('tools',[]));defs=list(value.get('tool_definitions',[]));environment={}
         if self.ros2 is not None:

@@ -1,0 +1,1012 @@
+{
+  "scope": {
+    "date": "2026-10-07",
+    "directive": "44-section final live acceptance",
+    "functional_areas": 33,
+    "software_boundaries_passing": 33,
+    "software_completion_percent": 100,
+    "complete": 24,
+    "external_acceptance_required": 9,
+    "blocked": 0,
+    "broken": 0,
+    "baseline_sha": "f5b12e93e611c50d2848108ebaedd59d368771d5",
+    "checkpoint": "checkpoint/gen2-final-live-20261007"
+  },
+  "tests": {
+    "full": {
+      "passed": 727,
+      "failed": 0,
+      "skipped": 0,
+      "subtests_passed": 350,
+      "seconds": 48.32
+    },
+    "targeted": {
+      "passed": 173,
+      "failed": 0,
+      "skipped": 0,
+      "subtests_passed": 121,
+      "seconds": 16.91
+    }
+  },
+  "api_probes": {
+    "templates": 84,
+    "get": 31,
+    "post": 53,
+    "failures": 0,
+    "restart_persistence": "PASS",
+    "scope": "auth/validation probes; valid persistence flows separately covered"
+  },
+  "specialists": [
+    {
+      "name": "agent_builder",
+      "status": "COMPLETED",
+      "seconds": 27.6813,
+      "goal_id": "27266090e9c64627b9e81ccbc6a1aa03",
+      "task_run_id": "ed4fca6bfca946a2b0aa663e9cd45d70",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "ai_builder",
+      "status": "COMPLETED",
+      "seconds": 9.5285,
+      "goal_id": "5363eb6c1156431680ac27728f1a715f",
+      "task_run_id": "46b22ea9861945f6947cf73b1babdc32",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "application_builder",
+      "status": "COMPLETED",
+      "seconds": 8.7855,
+      "goal_id": "c3dff3f356db4580b14ac6cc276fd5f5",
+      "task_run_id": "2459580f7e7f4eeaba011cc7df8b65a1",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "automation",
+      "status": "COMPLETED",
+      "seconds": 10.0474,
+      "goal_id": "1314a7bdfdcd441dbe29553ba8ac7c4e",
+      "task_run_id": "a502a6205e64483b9495cc6b949665bd",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "coding",
+      "status": "COMPLETED",
+      "seconds": 8.0853,
+      "goal_id": "20ede371ac9f4d9d99d745256dde64bc",
+      "task_run_id": "5c10c9d110a9426c89b2eec9e345dfc7",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "content",
+      "status": "COMPLETED",
+      "seconds": 20.1829,
+      "goal_id": "d5649fe61c374c1da9d4dbad6a7ca7ce",
+      "task_run_id": "8aec52b6280b414da7cf1822995d0aca",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "data_analysis",
+      "status": "COMPLETED",
+      "seconds": 5.3263,
+      "goal_id": "73af7fabf17c422bb91e24e791e48589",
+      "task_run_id": "bcf2cf58df7b434898bf97b37ffad476",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "exam",
+      "status": "COMPLETED",
+      "seconds": 42.5531,
+      "goal_id": "93cba8e5e7de48c29ee37e017df80510",
+      "task_run_id": "aff6a511c57e429a93a76ef951deffbf",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "learning",
+      "status": "COMPLETED",
+      "seconds": 9.897,
+      "goal_id": "70e1387a5d1d4a4f8e7184781a66632f",
+      "task_run_id": "f07a7076caa34dbe9b096c76b9c33bf1",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "personal",
+      "status": "COMPLETED",
+      "seconds": 39.8101,
+      "goal_id": "280a1e6bf2b74ae7939878c6e1951f91",
+      "task_run_id": "eeb275bde4054fa7b42c5c9015eab974",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "productivity",
+      "status": "COMPLETED",
+      "seconds": 8.7017,
+      "goal_id": "7d86443b68304ff98e11231c92c59343",
+      "task_run_id": "ed17b3b056544de9baf4e3203fc109e7",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "project",
+      "status": "COMPLETED",
+      "seconds": 8.0417,
+      "goal_id": "99b23c7c24b641659547f673fe403f8a",
+      "task_run_id": "a17f3cf695c14a6585d4e2e2b6fcbb8a",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "research",
+      "status": "COMPLETED",
+      "seconds": 7.8514,
+      "goal_id": "1ec922236ded4d568e31eec4d551dab4",
+      "task_run_id": "11cf034991c644cf80129dc280807da2",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "skill",
+      "status": "COMPLETED",
+      "seconds": 6.2258,
+      "goal_id": "a2543c2ebe8e46ed8d46408cccfe715d",
+      "task_run_id": "f08146ee0a714ecd8b3cb3beffcb0701",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "software_engineering",
+      "status": "COMPLETED",
+      "seconds": 15.5749,
+      "goal_id": "707a7da4771f436ab43c262c996ee7f9",
+      "task_run_id": "3ef9994d93704104a83a110aa39f4adc",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    },
+    {
+      "name": "system",
+      "status": "COMPLETED",
+      "seconds": 8.3869,
+      "goal_id": "a6f6543af271417cbb1287c099e32dba",
+      "task_run_id": "5ed0db98c1ff4cc28321c9431cad127f",
+      "verified": true,
+      "tools": [
+        "knowledge_search",
+        "calculator"
+      ],
+      "plan": "operator-authored StaticPlanner; real native provider"
+    }
+  ],
+  "providers": [
+    {
+      "probe": "github_repository_read",
+      "status": "PASS",
+      "seconds": 1.3215,
+      "detail": {
+        "status": "VERIFIED",
+        "verification_method": "GitHub exact repository reread",
+        "invocation_persisted": true
+      }
+    },
+    {
+      "probe": "linux_os_inspection",
+      "status": "PASS",
+      "seconds": 0.0061,
+      "detail": {
+        "status": "VERIFIED",
+        "verification_method": "independent Python OS state reread",
+        "invocation_persisted": true
+      }
+    },
+    {
+      "probe": "computer_portal_status",
+      "status": "PASS",
+      "seconds": 0.1655,
+      "detail": {
+        "status": "VERIFIED",
+        "verification_method": "fresh XDG portal capability reread",
+        "invocation_persisted": true
+      }
+    },
+    {
+      "probe": "embedding",
+      "status": "PASS",
+      "seconds": 0.4869,
+      "detail": {
+        "vectors": 2,
+        "dimensions": 2048,
+        "provider": "nvidia",
+        "fallback": false
+      }
+    },
+    {
+      "probe": "reranking",
+      "status": "PASS",
+      "seconds": 0.6364,
+      "detail": {
+        "top_id": "robot",
+        "fallback": false
+      }
+    },
+    {
+      "probe": "advisory_content_safety",
+      "status": "PASS",
+      "seconds": 0.4451,
+      "detail": {
+        "provider": "nvidia"
+      }
+    },
+    {
+      "probe": "persisted_semantic_retrieval",
+      "status": "PASS",
+      "seconds": 2.3473,
+      "detail": {
+        "top_id": "robot",
+        "persisted": true,
+        "cold_seconds": 1.0487962909974158,
+        "warm_seconds": 0.6036519339977531,
+        "rerank_provider": "nvidia"
+      }
+    },
+    {
+      "probe": "image_generation_artifact",
+      "status": "PASS",
+      "seconds": 2.9607,
+      "detail": {
+        "status": "VERIFIED",
+        "artifact_id": 1,
+        "dimensions": [
+          512,
+          512
+        ],
+        "fallback": false,
+        "verification_method": "authoritative artifact registry + local digest/image reread"
+      }
+    }
+  ],
+  "domains": {
+    "agent_builder": {
+      "status": "PASS",
+      "blueprint_id": 1,
+      "evaluation_id": 2,
+      "providers": [
+        "nvidia"
+      ],
+      "passed_cases": 1,
+      "deployment": "native registry installed; no external deployment claimed"
+    },
+    "ai_system_builder": {
+      "status": "PASS",
+      "blueprint_id": 1,
+      "implementation_plan_status": "materialized_static_verified",
+      "deployment": "planned_unverified",
+      "runtime_application": false
+    },
+    "application_builder": {
+      "status": "PASS",
+      "checks_passed": 3,
+      "artifact_digest_verified": true,
+      "deployment": "not published"
+    },
+    "learning": {
+      "status": "PASS",
+      "prerequisite_enforced": true,
+      "incorrect_score": 0,
+      "corrected_score": 100,
+      "applied_score": 100,
+      "evidence_verified": false,
+      "numeric_level": 0,
+      "mastery_claimed": false
+    },
+    "data": {
+      "status": "PASS",
+      "persisted_rows": 3,
+      "chart_points": 3,
+      "forecast_native_recipe": false
+    },
+    "research": {
+      "status": "PASS",
+      "external_truth_claimed": false
+    },
+    "documents": {
+      "status": "PASS",
+      "formats": [
+        {
+          "format": ".pdf",
+          "document_id": "doc_773cfb7bc0b6fb5c60417e0e18470891",
+          "chunks": 1,
+          "retrieved": 1
+        },
+        {
+          "format": ".docx",
+          "document_id": "doc_cb8261f31762da49bec7b5c14677e0ff",
+          "chunks": 4,
+          "retrieved": 4
+        },
+        {
+          "format": ".xlsx",
+          "document_id": "doc_dc3d385610b69b2b9ae19753eec26b66",
+          "chunks": 2,
+          "retrieved": 2
+        },
+        {
+          "format": ".txt",
+          "document_id": "doc_4094e21e72790719099e3dce88f194d2",
+          "chunks": 1,
+          "retrieved": 1
+        },
+        {
+          "format": ".md",
+          "document_id": "doc_df029a5ea842181c8de52dae55af5f50",
+          "chunks": 1,
+          "retrieved": 1
+        }
+      ],
+      "processing_version": "document-intelligence-v3",
+      "persisted_reread": true
+    },
+    "native_restart_reread": {
+      "status": "PASS",
+      "learning": true,
+      "analysis": true,
+      "research": true,
+      "agent": true
+    }
+  },
+  "multimodal_voice": {
+    "image_understanding": {
+      "status": "READY",
+      "seconds": 0.0005,
+      "description": "A solid red background fills the entire frame.",
+      "provenance": {
+        "extractor": "nvidia-multimodal/image",
+        "local_only_extraction": false,
+        "model": {
+          "capabilities": [
+            "multimodal",
+            "reasoning"
+          ],
+          "fallback": false,
+          "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+          "provider": "nvidia",
+          "provider_request_id": "chatcmpl-03fe6ed1-0489-47fe-a153-4c6c06c1f569",
+          "selection_reason": "configured capability route"
+        },
+        "processing_version": "document-intelligence-v3",
+        "source_digest": "6e878563d76d793249e4bfd4c4f854ef26d9d03c17d9e2107fd4cad31532602f"
+      },
+      "document_id": "doc_aa494e85b2567410a412a6db68c3433b",
+      "first_provider_call_seconds": 1.6748,
+      "seconds_scope": "cached reread"
+    },
+    "voice_connection": {
+      "state": "CONNECTED",
+      "failure_reason": null,
+      "provider": "google",
+      "model": "gemini-3.8-live",
+      "seconds": 0.8974
+    },
+    "voice_synthetic_roundtrip": {
+      "state": "ACTIVE",
+      "seconds": 10.24,
+      "heard_transcripts": [
+        "Calculate 2 + 2."
+      ],
+      "goal_id": "0cf25053579945d79c13de641d52bb1e",
+      "task_status": "COMPLETED",
+      "audio_output_bytes": 184322,
+      "provenance": {
+        "capability": "voice",
+        "fallback": false,
+        "input_modalities": [
+          "audio"
+        ],
+        "model": "gemini-3.8-live",
+        "output_modalities": [
+          "text",
+          "audio"
+        ],
+        "provider": "google",
+        "raw_audio_persisted": false,
+        "provider_request_id": "gemini_206281bcfaef4d7eaf7fa6e47e38d6df"
+      },
+      "physical_hardware": false
+    }
+  },
+  "ui": {
+    "desktop": [
+      {
+        "view": "chat",
+        "overflow": false
+      },
+      {
+        "view": "tasks",
+        "overflow": false
+      },
+      {
+        "view": "goals",
+        "overflow": false
+      },
+      {
+        "view": "projects",
+        "overflow": false
+      },
+      {
+        "view": "learning",
+        "overflow": false
+      },
+      {
+        "view": "skills",
+        "overflow": false
+      },
+      {
+        "view": "research",
+        "overflow": false
+      },
+      {
+        "view": "knowledge",
+        "overflow": false
+      },
+      {
+        "view": "memory",
+        "overflow": false
+      },
+      {
+        "view": "execution",
+        "overflow": false
+      },
+      {
+        "view": "approvals",
+        "overflow": false
+      },
+      {
+        "view": "automation",
+        "overflow": false
+      },
+      {
+        "view": "activity",
+        "overflow": false
+      },
+      {
+        "view": "system",
+        "overflow": false
+      }
+    ],
+    "mobile": [
+      {
+        "view": "chat",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "tasks",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "goals",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "projects",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "learning",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "skills",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "research",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "knowledge",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "memory",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "execution",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "approvals",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "automation",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "activity",
+        "active": true,
+        "overflow": false
+      },
+      {
+        "view": "system",
+        "active": true,
+        "overflow": false
+      }
+    ],
+    "fault_recoveries": [
+      {
+        "view": "chat",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "tasks",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "approvals",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "goals",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "projects",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "learning",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "skills",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "research",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "execution",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "knowledge",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "memory",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "automation",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "activity",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      },
+      {
+        "view": "system",
+        "visible_failure": true,
+        "retry": true,
+        "recovered": true
+      }
+    ],
+    "javascript_errors": [],
+    "actions": [
+      {
+        "action": "create_goal",
+        "ui_save": true,
+        "api_persistence": true
+      },
+      {
+        "action": "create_project",
+        "ui_save": true,
+        "api_persistence": true
+      },
+      {
+        "action": "create_task",
+        "ui_save": true,
+        "api_persistence": true
+      },
+      {
+        "action": "create_learning",
+        "ui_save": true,
+        "api_persistence": true
+      },
+      {
+        "action": "create_skill",
+        "ui_save": true,
+        "api_persistence": true
+      },
+      {
+        "action": "create_research",
+        "ui_save": true,
+        "api_persistence": true
+      },
+      {
+        "action": "edit_project_and_reread_link",
+        "edge_count": 58,
+        "linked_goal": "79442e3761cc4160a7ba7738ae1c193b",
+        "node_count": 55,
+        "project_id": "project_358e22e86a08446fbb4191693c105231"
+      },
+      {
+        "action": "execution_inspect",
+        "criteria": true,
+        "verified": 3
+      }
+    ],
+    "cache_version": 25
+  },
+  "build": {
+    "compile": true,
+    "import_modules": 199,
+    "platform_helper_import": "PASS under required system Python/GI",
+    "javascript_syntax": 11,
+    "pip_check": true,
+    "wheel": "sparkle_gen2-0.2.0a1-py3-none-any.whl",
+    "packaged_assets": 19,
+    "missing_assets": [],
+    "installed_entrypoints": 4,
+    "installed_import": true,
+    "checkout_import_preserved": true
+  },
+  "installed_runtime": {
+    "installed_import": true,
+    "startup_seconds": 1.612446,
+    "http_assets": {
+      "/": 200,
+      "/app.js": 200,
+      "/app.css": 200,
+      "/ui/app.js": 200,
+      "/ui/modules/core.js": 200,
+      "/ui/modules/workspace.js": 200,
+      "/service-worker.js": 200
+    },
+    "health": 200,
+    "unauthenticated_execution": 401,
+    "normal_cookie_enrollment": 201,
+    "authenticated_state": 200,
+    "goal_create": 201,
+    "restart_persistence": true
+  },
+  "forecast": {
+    "status": "COMPLETED",
+    "seconds": 0.1078,
+    "goal_id": "d5ca161fcfb040bf9192d9b6c2b8e65e",
+    "run_id": "fee557c3c82742aebe7971e088fc7810",
+    "approvals": 1,
+    "plan_origin": "scripted operator acceptance",
+    "verified_steps": 1,
+    "steps": [
+      {
+        "id": "test",
+        "status": "VERIFIED"
+      }
+    ],
+    "strict_worker_health": {
+      "configured": true,
+      "enabled": true,
+      "worker_identity_configured": true,
+      "explicit_approval_required": true,
+      "isolation_verified": true,
+      "profile": "SPARKLE-GEN2-WORKSPACE-STRICT/1",
+      "filesystem_isolation": true,
+      "network_isolation": true,
+      "resource_limits": true
+    },
+    "forecast": 8,
+    "worker_tests_passed": 2,
+    "hostile_isolation_canaries_passed": 7,
+    "persistent_task_run_reread": true
+  },
+  "performance": {
+    "engine": {
+      "initialization_seconds": 1.3204074870009208,
+      "request_seconds": 9.674151684012031,
+      "task_status": "COMPLETED",
+      "goal_id": "4dc5153f4f164515ab6fc9a80850ec96",
+      "active_runtime_seconds": 8.82357301801676,
+      "resource_usage": {
+        "planning_calls": 1,
+        "reported_tokens": 22273,
+        "tool_calls": 2
+      },
+      "phase_seconds": {
+        "context_retrieval_seconds": [
+          0.0014349780103657395
+        ],
+        "planning_seconds": [
+          8.823364615003811
+        ],
+        "native_tool_seconds": [
+          5.4567994084209204e-05,
+          8.265500946436077e-05
+        ]
+      },
+      "test_scope": "real provider; isolated data; external connectors disabled"
+    },
+    "http_before": {
+      "/health": [
+        0.00092,
+        0.000902,
+        0.001033
+      ],
+      "/api/state": [
+        0.014801,
+        0.009999,
+        0.015569
+      ],
+      "/api/os": [
+        0.009726,
+        0.007094,
+        0.010159
+      ],
+      "/api/system": [
+        2.551071,
+        0.013657,
+        0.009988
+      ]
+    },
+    "http_after": {
+      "/health": [
+        {
+          "status": 200,
+          "seconds": 0.006729932007146999
+        },
+        {
+          "status": 200,
+          "seconds": 0.0009317380026914179
+        },
+        {
+          "status": 200,
+          "seconds": 0.0008302729984279722
+        }
+      ],
+      "/api/state": [
+        {
+          "status": 200,
+          "seconds": 0.00578037700324785
+        },
+        {
+          "status": 200,
+          "seconds": 0.0040300760010723025
+        },
+        {
+          "status": 200,
+          "seconds": 0.004815428997972049
+        }
+      ],
+      "/api/os": [
+        {
+          "status": 200,
+          "seconds": 0.014340049005113542
+        },
+        {
+          "status": 200,
+          "seconds": 0.010675921992515214
+        },
+        {
+          "status": 200,
+          "seconds": 0.013704063996556215
+        }
+      ],
+      "/api/system": [
+        {
+          "status": 200,
+          "seconds": 2.9714808220014675
+        },
+        {
+          "status": 200,
+          "seconds": 0.0168364040000597
+        },
+        {
+          "status": 200,
+          "seconds": 0.016254960995865986
+        }
+      ]
+    },
+    "browser": {
+      "endpoints": {
+        "/api/os": [
+          {
+            "seconds": 0.016900000005960463,
+            "status": 200
+          },
+          {
+            "seconds": 0.007899999991059304,
+            "status": 200
+          },
+          {
+            "seconds": 0.011100000008940696,
+            "status": 200
+          }
+        ],
+        "/api/state": [
+          {
+            "seconds": 0.016,
+            "status": 200
+          },
+          {
+            "seconds": 0.009200000002980232,
+            "status": 200
+          },
+          {
+            "seconds": 0.012700000002980232,
+            "status": 200
+          }
+        ],
+        "/api/system": [
+          {
+            "seconds": 2.6242000000029804,
+            "status": 200
+          },
+          {
+            "seconds": 0.02,
+            "status": 200
+          },
+          {
+            "seconds": 0.014799999997019768,
+            "status": 200
+          }
+        ],
+        "/health": [
+          {
+            "seconds": 0.004799999997019768,
+            "status": 200
+          },
+          {
+            "seconds": 0.003799999997019768,
+            "status": 200
+          },
+          {
+            "seconds": 0.004300000011920929,
+            "status": 200
+          }
+        ]
+      },
+      "navigation": {
+        "dom_content_loaded_seconds": 0.019600000008940695,
+        "ttfb_seconds": 0.003900000005960465
+      },
+      "projects_loaded": true,
+      "projects_view_seconds": 0.022700000002980232
+    },
+    "latest_connector_enabled_initialization_seconds": 2.3658797410025727
+  },
+  "security": {
+    "open": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    },
+    "scope": "approved source/tests/docs and scoped HTTP/isolation regressions; no CVE scan",
+    "initial_tracked_scan_files": 359,
+    "credential_shaped_findings": [],
+    "live_get_error_probe": {
+      "status": 400,
+      "error": "invalid_request",
+      "type": "ValueError",
+      "private_value_echoed": false
+    },
+    "final_tracked_scan_files": 368,
+    "final_staged_files": 37,
+    "matrix_evidence_consistent": true
+  },
+  "protected": {
+    "source_code_zip": "untouched; status filename only",
+    "gen1_source": "unchanged; public API test data isolated",
+    "android_source": "unchanged",
+    "existing_repository_files_deleted": 0,
+    "credentials_published": 0
+  }
+}

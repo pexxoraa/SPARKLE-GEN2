@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib,json,re,uuid
+import hashlib,inspect,json,re,uuid
 from dataclasses import asdict,dataclass,field
 from datetime import UTC,datetime,timedelta
 from pathlib import PurePosixPath
@@ -49,6 +49,7 @@ class DelegationRequest:
     authorized_action:dict[str,Any]|None=None
     grant_id:str|None=None
     trusted_scope:dict[str,Any]=field(default_factory=dict)
+    read_only:bool=False
     def to_dict(self):return asdict(self)
 
 @dataclass(slots=True)
@@ -299,6 +300,9 @@ class SpecialistDelegationService:
     def available(self):return all(callable(getattr(self.gateway,n,None)) for n in ('specialist_catalog','specialist_limits','delegate_specialists'))
     def catalog(self):return list(self.gateway.specialist_catalog()) if self.available() else []
     def limits(self):return dict(self.gateway.specialist_limits()) if self.available() else {}
+    def _supports_authorization(self):
+        try:return 'authorization' in inspect.signature(self.gateway.delegate_specialists).parameters
+        except (TypeError,ValueError):return False
     @staticmethod
     def deterministic_id(goal_id,task_run_id,step_id,specialists,objective,authorized_action=None):
         raw='|'.join([goal_id,task_run_id,step_id,','.join(specialists),' '.join(objective.split()),_canonical(authorized_action or {})]);return 'dlg_'+hashlib.sha256(raw.encode()).hexdigest()[:32]
@@ -307,6 +311,8 @@ class SpecialistDelegationService:
         if not request.request_id or not request.goal_id or not request.task_run_id or not request.trace_id:raise ValueError('delegation correlation is required')
         if not isinstance(request.user_id,str) or not request.user_id.strip() or len(request.user_id)>256:raise ValueError('delegation user identity is invalid')
         if not isinstance(request.objective,str) or not request.objective.strip() or len(request.objective)>12000:raise ValueError('delegation objective is invalid')
+        if type(request.read_only) is not bool:raise ValueError('read_only must be boolean')
+        if request.read_only and (request.authorized_action is not None or request.grant_id):raise PermissionError('read_only_delegation_cannot_hold_write_authority')
         if not isinstance(request.specialists,list) or not request.specialists:raise ValueError('delegation requires specialists')
         if any(not isinstance(x,str) or not x for x in request.specialists):raise ValueError('specialist names are invalid')
         if len(set(request.specialists))!=len(request.specialists):raise ValueError('duplicate specialist names are not allowed')
@@ -324,9 +330,10 @@ class SpecialistDelegationService:
         if unsafe:
             if request.authorized_action is None:
                 detail=';'.join(f"{name}:{','.join(sorted(tools))}" for name,tools in sorted(unsafe.items()))
-                raise PermissionError('specialist_requires_nondelegable_authority:'+detail)
-            tool,_,_=self.grants._validate_request_action(request)
-            if tool not in set(catalog[request.specialists[0]].get('tools',[])):raise PermissionError('approved tool is not available to approved specialist')
+                if not request.read_only or not self._supports_authorization():raise PermissionError('specialist_requires_nondelegable_authority:'+detail)
+            else:
+                tool,_,_=self.grants._validate_request_action(request)
+                if tool not in set(catalog[request.specialists[0]].get('tools',[])):raise PermissionError('approved tool is not available to approved specialist')
         elif request.authorized_action is not None:raise PermissionError('authorized action is unnecessary for read-only delegation')
         if request.risk not in {'LOW','MEDIUM','HIGH','CRITICAL'}:raise ValueError('delegation risk is invalid')
         return True
@@ -374,7 +381,7 @@ class SpecialistDelegationService:
         if request.authorized_action is not None:payload['approved_action']={'tool':request.authorized_action.get('tool'),'arguments':_clean_tool_arguments(request.authorized_action.get('arguments',{}))}
         execution_text='GEN2_DELEGATION_REQUEST='+_canonical(payload)
         if len(execution_text)>12000:raise ValueError('delegation payload exceeds bound')
-        authorization=None if request.authorized_action is None else DelegationAuthorizationContext(self,request,self.catalog())
+        authorization=DelegationAuthorizationContext(self,request,self.catalog()) if request.authorized_action is not None or (request.read_only and self._supports_authorization()) else None
         try:
             if authorization is None:raw=self.gateway.delegate_specialists(execution_text,request.specialists,user_id=request.user_id,input_source=input_source)
             else:raw=self.gateway.delegate_specialists(execution_text,request.specialists,user_id=request.user_id,input_source=input_source,authorization=authorization)
@@ -386,4 +393,12 @@ class SpecialistDelegationService:
             result=DelegationResult(request.request_id,request.goal_id,request.task_run_id,status,list(raw.get('specialist_results',[])),str(raw.get('findings',''))[:12000],list(raw.get('artifacts',[])),list(raw.get('evidence',[])),float(raw.get('confidence',0.0)),list(raw.get('unresolved_items',[])),dict(raw.get('provenance',{}))|{'parent_trace_id':request.trace_id,'user_id':request.user_id,'grant_id':request.grant_id},verification,raw.get('failure'),now())
             current.state='COMPLETED' if status=='COMPLETED' and verification.get('verified') is True else ('WAITING' if status=='WAITING_APPROVAL' else 'FAILED');current.result=result;current.updated_at=now();self.store.save_delegation(current);return result
         except Exception as exc:
-            current=self.load(request.request_id);result=DelegationResult(request.request_id,request.goal_id,request.task_run_id,'FAILED',[],'',[],[],0.0,[str(exc)[:300]],{'parent_trace_id':request.trace_id,'user_id':request.user_id,'grant_id':request.grant_id},{'verified':False,'method':'Gen-1 specialist delegation failed'},{'category':getattr(exc,'orchestration_code',type(exc).__name__),'reason':str(exc)[:300]},now());current.state='FAILED';current.result=result;current.updated_at=now();self.store.save_delegation(current);return result
+            category=getattr(exc,'orchestration_code',None) or getattr(exc,'category',None) or type(exc).__name__
+            allowed={'tool_call_limit','tool_round_limit','workflow_deadline','timeout','connectivity_failure','provider_failure','rate_limited','authentication_failure','configuration_failure','model_unavailable','malformed_response','unsupported_operation','PermissionError','ValueError','RuntimeError','ModelError'}
+            category=category if isinstance(category,str) and category in allowed else 'specialist_failure'
+            if str(exc)=='delegated_action_independent_verification_failed':category='delegated_action_independent_verification_failed'
+            reason='Specialist execution failed: '+category
+            failure={'category':category,'reason':reason}
+            status_code=getattr(exc,'status_code',None)
+            if type(status_code) is int and 100<=status_code<=599:failure['provider_status_code']=status_code
+            current=self.load(request.request_id);result=DelegationResult(request.request_id,request.goal_id,request.task_run_id,'FAILED',[],'',[],[],0.0,[reason],{'parent_trace_id':request.trace_id,'user_id':request.user_id,'grant_id':request.grant_id},{'verified':False,'method':'Gen-1 specialist delegation failed'},failure,now());current.state='FAILED';current.result=result;current.updated_at=now();self.store.save_delegation(current);return result

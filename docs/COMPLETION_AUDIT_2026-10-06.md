@@ -1,5 +1,7 @@
 # Completion audit — 2026-10-06
 
+> Historical scope and evidence. The current 44-section final live acceptance directive is audited in [FINAL_LIVE_ACCEPTANCE_2026-10-07.md](FINAL_LIVE_ACCEPTANCE_2026-10-07.md). Its software counts, current external dependencies, and verdict supersede this report. Missing earlier original documents are not a blocker for that current directive.
+
 Full specification sign-off is BLOCKED. The attached 75-section master directive is available; the two named originals are not:
 
 1. SPARKLE — PERSONAL ARTIFICIAL INTELLIGENCE SYSTEM — COMPLETE AUTONOMOUS BUILD DIRECTIVE

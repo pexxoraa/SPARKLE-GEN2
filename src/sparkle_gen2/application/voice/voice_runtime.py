@@ -101,7 +101,7 @@ class VoiceSessionService:
         s.state=VoiceSessionState.CONNECTING.value;self._save(s)
         try:provider,prov=self._resolve_provider();ref=provider.open_session({'session_id':s.session_id,'owner_user_id':s.owner_user_id,'classification':s.classification,'input_audio':{'sample_rate':INPUT_RATE,'channels':1,'sample_width':2,'encoding':'pcm_s16le'},'output_audio':{'sample_rate':OUTPUT_RATE,'channels':1,'sample_width':2,'encoding':'pcm_s16le'}})
         except Exception as exc:
-            s.state=VoiceSessionState.UNAVAILABLE.value if 'unavailable' in str(exc).lower() or 'external' in str(exc).lower() or 'capability' in str(exc).lower() or 'transport' in str(exc).lower() else VoiceSessionState.FAILED.value;s.failure_reason=type(exc).__name__+':'+str(exc)[:240];self.store.save_voice_event(s.session_id,'voice_connect_failed',{'error_type':type(exc).__name__,'state':s.state},now());return self._save(s)
+            s.state=VoiceSessionState.UNAVAILABLE.value if 'unavailable' in str(exc).lower() or 'external' in str(exc).lower() or 'capability' in str(exc).lower() or 'transport' in str(exc).lower() else VoiceSessionState.FAILED.value;s.failure_reason='voice_connect_failed:'+type(exc).__name__;self.store.save_voice_event(s.session_id,'voice_connect_failed',{'error_type':type(exc).__name__,'state':s.state},now());return self._save(s)
         if not isinstance(ref,str) or not ref.strip():s.state=VoiceSessionState.FAILED.value;s.failure_reason='provider returned invalid session reference';return self._save(s)
         self._providers[s.session_id]=provider;s.provider_session_reference=ref;s.provider=prov.get('provider');s.model=prov.get('model');s.fallback=bool(prov.get('fallback',False));s.provenance={'capability':'voice','provider':s.provider,'model':s.model,'fallback':s.fallback,'input_modalities':['audio'],'output_modalities':['text','audio'],'raw_audio_persisted':False};s.state=VoiceSessionState.CONNECTED.value;self.store.save_voice_event(s.session_id,'voice_connected',{'provider':s.provider,'model':s.model,'fallback':s.fallback},now());return self._save(s)
     @staticmethod
@@ -165,7 +165,7 @@ class VoiceSessionService:
         except Exception as exc:
             recoverable=isinstance(exc,(TimeoutError,ConnectionError,ModelError)) and bool(getattr(exc,'retryable',True))
             if not recoverable:
-                s.state=VoiceSessionState.FAILED.value;s.failure_reason=type(exc).__name__+':'+str(exc)[:240];self._save(s);raise
+                s.state=VoiceSessionState.FAILED.value;s.failure_reason='voice_tts_failed:'+type(exc).__name__;self._save(s);raise (ValueError if isinstance(exc,ValueError) else PermissionError if isinstance(exc,PermissionError) else RuntimeError)(s.failure_reason) from None
             # The action/conversation has already been authorized by SPARKLE at
             # this point. Never turn a transient speech-generation failure into
             # an app 500 or ask the user to repeat a command that may already have run.
@@ -238,12 +238,12 @@ class VoiceSessionService:
         except Exception as exc:
             recoverable=isinstance(exc,(TimeoutError,ConnectionError,ModelError)) and bool(getattr(exc,'retryable',True))
             if not recoverable:
-                s.state=VoiceSessionState.FAILED.value;s.failure_reason=type(exc).__name__+':'+str(exc)[:240];self.store.save_voice_event(s.session_id,'voice_provider_failed',{'error_type':type(exc).__name__,'recoverable':False},now());self._save(s);raise
+                s.state=VoiceSessionState.FAILED.value;s.failure_reason='voice_input_failed:'+type(exc).__name__;self.store.save_voice_event(s.session_id,'voice_provider_failed',{'error_type':type(exc).__name__,'recoverable':False},now());self._save(s);raise (ValueError if isinstance(exc,ValueError) else PermissionError if isinstance(exc,PermissionError) else RuntimeError)(s.failure_reason) from None
             reason=type(exc).__name__
             s.state=VoiceSessionState.CONNECTED.value
             s.failure_reason='voice_input_failed:'+reason
             self.store.save_voice_event(s.session_id,'voice_provider_failed',{'error_type':reason,'recoverable':True},now());self._save(s)
-            fallback={'text':'I had trouble hearing that. Please say it again.','status':'COMPLETED','voice_retry':True,'provenance':{'capability':'voice_recovery'}}
+            fallback={'text':'I had trouble hearing that. Please say it again.','status':'FAILED','voice_retry':True,'provenance':{'capability':'voice_recovery'}}
             return VoiceResponse(s.session_id,s.state,[],[],fallback,{'final':False,'recoverable':True,'provider_error':reason},dict(s.provenance)|{'voice_recovery':True})
         # Provider speech before PersonalAgent authorization would bypass SPARKLE policy.
         if heard.audio_chunks:s.state=VoiceSessionState.FAILED.value;s.failure_reason='provider_audio_before_personal_agent_authorization';self._save(s);raise RuntimeError(s.failure_reason)
@@ -272,7 +272,7 @@ class VoiceSessionService:
                 reason=type(exc).__name__
                 s.state=VoiceSessionState.ACTIVE.value;s.failure_reason='voice_agent_failed:'+reason
                 self.store.save_voice_event(s.session_id,'voice_agent_failed',{'error_type':reason,'recoverable':True},now());self._save(s)
-                return VoiceResponse(s.session_id,s.state,transcripts,[],{'text':'I hit a temporary processing issue. I did not retry the request automatically; check your latest task/result before repeating it.','status':'COMPLETED','voice_retry':True,'provenance':{'capability':'voice_recovery','reason':'agent_dispatch_failed'}},{'final':False,'recoverable':True,'provider_error':reason},dict(s.provenance)|{'voice_recovery':True})
+                return VoiceResponse(s.session_id,s.state,transcripts,[],{'text':'I hit a temporary processing issue. I did not retry the request automatically; check your latest task/result before repeating it.','status':'FAILED','voice_retry':True,'provenance':{'capability':'voice_recovery','reason':'agent_dispatch_failed'}},{'final':False,'recoverable':True,'provider_error':reason},dict(s.provenance)|{'voice_recovery':True})
         if agent_result.get('status')=='WAITING':
             s.pending_goal_id=str(agent_result.get('goal_id') or '');s.outcome='WAITING';self.store.save_voice_event(s.session_id,'voice_agent_waiting',{'goal_id':s.pending_goal_id,'task_run_id':agent_result.get('task_run_id'),'trace_id':agent_result.get('trace_id'),'approval_count':len(agent_result.get('approvals',[]))},now());self._save(s)
             return VoiceResponse(s.session_id,s.state,transcripts,[],agent_result,heard.metadata()|{'authorization_pending':True},dict(s.provenance))

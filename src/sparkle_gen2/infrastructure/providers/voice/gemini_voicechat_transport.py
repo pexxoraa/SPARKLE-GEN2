@@ -22,6 +22,7 @@ PERSONAL_AGENT_TOOL = "sparkle_personal_agent"
 ENCODING = "pcm_s16le"
 MAX_AUDIO_CHUNK_BYTES = 64_000
 MAX_TRANSCRIPT_CHARS = 16_000
+MAX_RESPONSE_AUDIO_BYTES = 4_320_000
 
 
 def _resample_pcm16(data: bytes, source_rate: int, target_rate: int) -> bytes:
@@ -304,7 +305,7 @@ class GeminiLiveVoiceTransport:
     def _config(self) -> dict[str, Any]:
         return {
             "response_modalities": ["AUDIO"],
-            "max_output_tokens": 40,
+            "max_output_tokens": 1536,
             "input_audio_transcription": {},
             "output_audio_transcription": {},
             "realtime_input_config": {
@@ -588,21 +589,19 @@ class GeminiLiveVoiceTransport:
         transcript_parts = []
         sequence = 0
         started = time.monotonic()
-        deadline = started + min(self._turn_timeout, 6.0)
-        first_audio_deadline = started + 3.0
-        tail_deadline = None
+        deadline = started + self._turn_timeout
+        first_audio_deadline = started + min(self._turn_timeout, 15.0)
+        completed = False
+        audio_bytes = 0
+        transcript_chars = 0
         while time.monotonic() < deadline:
             try:
                 wait_for=min(0.15, max(0.05, deadline-time.monotonic()))
                 if not chunks:
                     wait_for=min(wait_for,max(0.05,first_audio_deadline-time.monotonic()))
-                elif tail_deadline is not None:
-                    wait_for=min(wait_for,max(0.05,tail_deadline-time.monotonic()))
                 message = state.runner.recv(wait_for)
             except TimeoutError:
                 if not chunks and time.monotonic() >= first_audio_deadline:
-                    break
-                if chunks and tail_deadline is not None and time.monotonic() >= tail_deadline:
                     break
                 continue
             self._check_cancellation(state, message)
@@ -610,6 +609,9 @@ class GeminiLiveVoiceTransport:
                 raise PermissionError("gemini voice attempted nested function execution")
             audio = self._message_audio(message)
             if audio:
+                audio_bytes += len(audio)
+                if audio_bytes > MAX_RESPONSE_AUDIO_BYTES:
+                    raise ModelError("Gemini response audio exceeds bound", retryable=False, category="malformed_response")
                 for offset in range(0, len(audio), MAX_AUDIO_CHUNK_BYTES):
                     piece = audio[offset:offset + MAX_AUDIO_CHUNK_BYTES]
                     if piece:
@@ -624,25 +626,29 @@ class GeminiLiveVoiceTransport:
                             "provider_reference": state.reference,
                         })
                         sequence += 1
-                tail_deadline=time.monotonic()+0.85
             content = getattr(message, "server_content", None)
             if content is not None:
                 output = getattr(content, "output_transcription", None)
                 part = self._bounded_text(getattr(output, "text", "") if output is not None else "")
-                if part: transcript_parts.append(part)
+                if part:
+                    transcript_chars += len(part)
+                    if transcript_chars > MAX_TRANSCRIPT_CHARS:
+                        raise ModelError("Gemini response transcript exceeds bound", retryable=False, category="malformed_response")
+                    transcript_parts.append(part)
                 if bool(getattr(content, "interrupted", False)):
                     if state.interrupt_requested: raise RuntimeError("gemini voice authorized response was interrupted")
                     continue
                 if bool(getattr(content, "turn_complete", False)) and chunks:
+                    completed = True
                     break
-            if chunks and tail_deadline is not None and time.monotonic() >= tail_deadline:
-                break
         if not chunks:
             raise ModelError(
                 "Gemini returned no authorized response audio",
                 retryable=True,
                 category="provider_failure",
             )
+        if not completed:
+            raise ModelError("Gemini authorized speech turn did not complete within budget", retryable=True, category="timeout")
         chunks[-1]["final"] = True
         transcript = "".join(transcript_parts).strip()
         state.input_transcript = ""

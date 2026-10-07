@@ -25,6 +25,9 @@ from ..application.system.personal_core import PersonalCore
 
 class Handler(BaseHTTPRequestHandler):
     server_version='SPARKLE-Personal-Core/1'
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(15)
     def log_message(self,fmt,*args):pass
     @property
     def core(self):return self.server.core
@@ -111,15 +114,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._scope(device,'task_status');q=parse_qs(u.query);limit=min(200,max(1,int(q.get('limit',['100'])[0])));after=max(0,int(q.get('after',['0'])[0]));owned={g['goal_id'] for g in self.core.store.recent_goals(1000) if g.get('user_id','user')=='user'};events=[e for e in reversed(self.core.store.recent_events(limit)) if int(e['event_id'])>after and e.get('goal_id') in owned];return self._json(200,{'events':events,'device_id':device['device_id'],'cursor':max([after]+[int(e['event_id']) for e in events])})
             return self._json(404,{'error':'not_found'})
         except PermissionError as exc:return self._json(401,{'error':str(exc)})
-        except (KeyError,ValueError) as exc:return self._json(400,{'error':str(exc)})
+        except (KeyError,ValueError) as exc:return self._json(400,{'error':'invalid_request','type':type(exc).__name__})
         except Exception as exc:return self._json(500,{'error':'internal_error','type':type(exc).__name__})
     def do_POST(self):
         u=urlparse(self.path)
         try:
+            JsonRequest.check_origin(self)
+            device=None if u.path=='/api/enroll' else self._device()
             body=self._body(6_000_000 if u.path=='/api/multimodal' else 1_000_000)
+            JsonRequest.validate_fields(body)
             if u.path=='/api/enroll':
-                d,t=self.core.devices.enroll(body.get('code',''),name=body.get('name',''),kind=body.get('kind',''),os_name=body.get('os',''),capabilities=body.get('capabilities',[]));web=body.get('client')=='web';headers={'Set-Cookie':f'sparkle_device={t}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000'} if web else {};return self._json(201,{'device':d.to_dict(),**({} if web else {'token':t})},headers)
-            device=self._device()
+                d,t=self.core.devices.enroll(body.get('code',''),name=body.get('name',''),kind=body.get('kind',''),os_name=body.get('os',''),capabilities=body.get('capabilities',[]));web=body.get('client')=='web';secure='; Secure' if isinstance(self.connection,ssl.SSLSocket) else '';headers={'Set-Cookie':f'sparkle_device={t}; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000{secure}'} if web else {};return self._json(201,{'device':d.to_dict(),**({} if web else {'token':t})},headers)
             if u.path=='/api/logout':return self._json(200,{'ok':True},{'Set-Cookie':'sparkle_device=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})
             if u.path=='/api/voice/sessions':
                 self._scope(device,'conversation');value=self.core.voice_start(owner_user_id='user',conversation_session_id=body.get('conversation_session_id'),classification=body.get('classification','PRIVATE'),persist_transcript=body.get('persist_transcript',True));return self._json(201,value)

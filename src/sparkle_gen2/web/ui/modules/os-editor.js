@@ -39,7 +39,7 @@ async function osEditorSubmit(event){
       path=(kind==='task'?'/api/os/tasks/':kind==='goal'?'/api/os/goals/':'/api/os/records/')+encodeURIComponent(modal.dataset.recordId);
     }
     const result=await api(path,{method:'POST',body:JSON.stringify(body)});
-    osEditorClose();await refresh();const view={task:'tasks',goal:'goals',project:'projects',learning:'learning',skill:'skills',research:'research'}[kind];setView(view,{load:false});await loadOS();toast(result.text||('Added '+kind));
+    osEditorClose();const view={task:'tasks',goal:'goals',project:'projects',learning:'learning',skill:'skills',research:'research'}[kind];setView(view,{load:false});await refresh();await loadOS();toast(result.text||('Added '+kind));
   }catch(e){error.textContent=e.message}
 }
 async function planOSItem(kind,id){

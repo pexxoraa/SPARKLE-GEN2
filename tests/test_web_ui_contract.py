@@ -22,9 +22,10 @@ def test_redesigned_shell_preserves_runtime_hooks():
     ]
     for element_id in required:
         assert f'id="{element_id}"' in html
-    assert "/app.css?v=23" in html
-    assert "/app.js?v=23" in html
-    assert "sparkle-shell-v23" in (WEB / "service-worker.js").read_text()
+    version = re.search(r'/app\.js\?v=(\d+)', html).group(1)
+    assert f"/app.css?v={version}" in html
+    assert f"sparkle-shell-v{version}" in (WEB / "service-worker.js").read_text()
+    assert f"?v={version}" in ui_js
     assert ".command-stage" in css and ".mobile-nav" in css
     assert ".chat-structured" in css and ".chat-section" in css
     assert 'function renderMarkdown' in modules['core.js'] and 'function renderChatStructure' in modules['conversation.js']

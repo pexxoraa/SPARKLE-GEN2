@@ -69,3 +69,11 @@ Fresh SPARKLE-side evidence, separate from the prior standalone provider test, p
 ## PWA voice client
 
 The Personal Core PWA now exposes the accepted voice route instead of a stale disabled control. Browser capture is bounded to 30 seconds, held in memory only, resampled to SPARKLE's 24 kHz mono PCM16 frame contract, and sent through authenticated VoiceSession endpoints. Approval-sensitive voice turns remain silent while `WAITING`; either approval surface resumes the exact persisted goal and only the authorized provider continuation is returned for playback. Static audio uploads to `/api/multimodal` remain intentionally separate and direct callers to the realtime VoiceSession API rather than creating a second voice execution path.
+
+## Final software revalidation — 2026-10-07
+
+Fresh synthetic PCM input traversed the real Gemini Live STT → shared PersonalAgent → native calculator/verification → Gemini TTS path. The transcript was “Calculate 2 + 2.”, the task reached COMPLETED, and output contained 184,322 bytes of 24 kHz mono PCM16 with fallback disabled. Connection took 0.8974 seconds and the turn took 10.24 seconds. Physical microphone capture and speaker playback require separate hardware acceptance.
+
+The reproduced pre-fix turn completed execution but returned zero audio with an explicit TTS fallback. The transport now reserves 1,536 output tokens, waits up to the configured turn deadline (45 seconds by default, capped at 90), allows up to 15 seconds for first audio, and requires provider `turn_complete` before returning final speech. Response limits remain 4,320,000 audio bytes and 16,000 transcript characters. Incomplete or oversized output fails explicitly; partial speech is not presented as a completed turn.
+
+Connect/input/TTS failures retain safe phase/type categories without raw provider diagnostics. Failed input or task dispatch returns FAILED and permits a fresh retry without automatically replaying an action. TTS fallback preserves an execution that genuinely completed. See `test_final_document_voice_acceptance.py`, `test_final_voice_budget_acceptance.py`, and the [current audit](FINAL_LIVE_ACCEPTANCE_2026-10-07.md).

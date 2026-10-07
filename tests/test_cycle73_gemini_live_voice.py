@@ -141,7 +141,7 @@ class GeminiLiveVoiceTests(unittest.TestCase):
         transport=GeminiLiveVoiceTransport(secrets=SecretResolver({GEMINI_SECRET_REF:"unit"}),secret_refs=[GEMINI_SECRET_REF],runner_factory=factory)
         ref=transport.open_session(self.session());cfg=factory.runners[0].config
         self.assertNotIn("tools",cfg)
-        self.assertEqual(cfg["max_output_tokens"],40)
+        self.assertEqual(cfg["max_output_tokens"],1536)
         self.assertTrue(cfg["realtime_input_config"]["automatic_activity_detection"]["disabled"])
         self.assertIn("input_audio_transcription",cfg);self.assertIn("output_audio_transcription",cfg);self.assertNotIn("thinking_config",cfg)
         self.assertIn("SPARKLE owns policy",cfg["system_instruction"])

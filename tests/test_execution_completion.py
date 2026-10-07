@@ -48,13 +48,17 @@ class CompletionTests(unittest.TestCase):
 
     @unittest.skipUnless(Path('/proc/self/stat').exists(),'Linux process identity unavailable')
     def test_dead_unreaped_process_lease_is_reclaimed(self):
-        import subprocess,sys
+        import os,subprocess,sys
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'core.db';store=Gen2Store(path)
             code='from sparkle_gen2.storage import Gen2Store;import sys;s=Gen2Store(sys.argv[1]);assert s.claim_execution("goal","old");print("claimed",flush=True)'
             process=subprocess.Popen([sys.executable,'-c',code,str(path)],stdout=subprocess.PIPE,text=True)
             try:
                 self.assertEqual(process.stdout.read().strip(),'claimed')
+                # Pipe EOF can precede process exit. Wait for death without
+                # reaping so this exercises a zombie lease deterministically.
+                exited=os.waitid(os.P_PID,process.pid,os.WEXITED|os.WNOWAIT)
+                self.assertEqual(exited.si_pid,process.pid)
                 self.assertTrue(store.claim_execution('goal','replacement'))
             finally:
                 process.stdout.close();process.wait(timeout=10)

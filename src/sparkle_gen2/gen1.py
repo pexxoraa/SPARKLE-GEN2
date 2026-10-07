@@ -2,8 +2,20 @@ from __future__ import annotations
 import hashlib,json,uuid,os
 from types import SimpleNamespace
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass,replace
 from typing import Any,Protocol
+
+def _canonical_skill_levels(value):
+    if isinstance(value,list):return [_canonical_skill_levels(item) for item in value]
+    if not isinstance(value,dict):return value
+    output={key:_canonical_skill_levels(item) for key,item in value.items()}
+    level=output.get('current_level')
+    if type(level) is int and 0<=level<=6:
+        names=('UNKNOWN','AWARENESS','BEGINNER','WORKING','COMPETENT','ADVANCED','MASTERED')
+        if 'current_level_name' in output:output['source_level_name']=output['current_level_name']
+        output['current_level_name']=names[level]
+        output['level_protocol']='SPARKLE-GEN2-SKILL-LEVELS/1'
+    return output
 
 @dataclass(slots=True)
 class ToolObservation:
@@ -13,12 +25,24 @@ class ToolObservation:
 class _AuthorizedToolProxy:
     def __init__(self,base,authorization):self.base=base;self.authorization=authorization
     def definitions(self,allowed=None):
-        if allowed is None:return self.base.definitions()
+        if allowed is None:
+            if not getattr(self.authorization.request,'read_only',False):return self.base.definitions()
+            allowed={tool for name in self.authorization.request.specialists for tool in self.authorization.catalog.get(name,{}).get('tools',[])}
         return self.base.definitions(self.authorization.visible_tools(set(allowed)))
     def execute(self,name,arguments,*,allowed=None):
         if allowed is None:raise PermissionError('delegated tool execution requires specialist allowlist')
-        authorized=self.authorization.authorize(name,arguments,set(allowed));output=self.base.execute(name,authorized,allowed=set(allowed));self.authorization.observe(name,authorized,output);return output
+        authorized=self.authorization.authorize(name,arguments,set(allowed));output=self.base.execute(name,authorized,allowed=set(allowed));self.authorization.observe(name,authorized,output);return _canonical_skill_levels(output) if name=='skill_search' else output
     def status(self):return self.base.status()
+
+class _ReadonlyAgentProxy:
+    """A request-local registry view; the authoritative native agents are unchanged."""
+    def __init__(self,base,authorization):self.base=base;self.authorization=authorization
+    def get(self,name):
+        spec=self.base.get(name)
+        allowed=self.authorization.visible_tools(set(spec.tools))
+        return replace(spec,tools=type(spec.tools)(tool for tool in spec.tools if tool in allowed))
+    def list(self):
+        return [dict(row,tools=sorted(self.authorization.visible_tools(set(row.get('tools',[]))))) for row in self.base.list()]
 
 class Gen1Gateway(Protocol):
     def retrieve_context(self,request:str,requirements:list[str])->dict[str,Any]: ...
@@ -380,7 +404,8 @@ class LocalGen1Gateway:
         if authorization is not None:
             authorization.runtime=self
             base=orchestrator;proxy=_AuthorizedToolProxy(self.system.tools,authorization)
-            orchestrator=type(base)(models=base.models,agents=base.agents,agent_router=base.agent_router,context=base.context,tools=proxy,traces=base.traces,max_tool_rounds=base.max_tool_rounds,max_tool_calls=base.max_tool_calls,max_specialists=base.max_specialists,max_workflow_seconds=base.max_workflow_seconds)
+            agents=_ReadonlyAgentProxy(base.agents,authorization) if getattr(authorization.request,'read_only',False) else base.agents
+            orchestrator=type(base)(models=base.models,agents=agents,agent_router=base.agent_router,context=base.context,tools=proxy,traces=base.traces,max_tool_rounds=base.max_tool_rounds,max_tool_calls=base.max_tool_calls,max_specialists=base.max_specialists,max_workflow_seconds=base.max_workflow_seconds)
         result=orchestrator.run_multi(str(objective),agent_names=list(specialists),user_id=user_id,input_source=input_source)
         traces=[r for r in self.system.traces.recent(limit=100) if r.get('input_source')==input_source]
         requested=set(specialists);specialist_rows=[r for r in traces if r.get('agent') in requested]
@@ -561,8 +586,9 @@ class LocalGen1Gateway:
             return ToolObservation(False,tool,{'error':'tool unavailable'},{'verified':False,'reason':'not_registered'})
         try: output=self.system.tools.execute(tool,arguments,allowed={tool})
         except Exception as exc:
-            return ToolObservation(False,tool,{'error':str(exc),'error_type':type(exc).__name__},{'verified':False,'reason':'execution_failed'})
+            return ToolObservation(False,tool,{'error':'Gen-1 tool execution failed','error_type':type(exc).__name__},{'verified':False,'reason':'execution_failed'})
         if not isinstance(output,dict):output={'value':output}
+        if tool=='skill_search':output=_canonical_skill_levels(output)
         if tool=='memory_write' and output.get('status')=='pending':
             pid=output.get('proposal_id'); verified=False
             if isinstance(pid,str) and hasattr(self.system,'memory_review'):

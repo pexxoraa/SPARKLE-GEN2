@@ -1,5 +1,7 @@
 # Testing
 
+Current release evidence: [final live acceptance — 2026-10-07](FINAL_LIVE_ACCEPTANCE_2026-10-07.md). Dated results below retain their historical scope.
+
 Run the authoritative Gen-2 suite from the project environment:
 
 ```bash

@@ -8,10 +8,10 @@ from xml.etree import ElementTree as ET
 from ...application.context_engine import ContextItem
 from ...application.retrieval import DeterministicRetrievalRuntime
 
-PROCESSING_VERSION='document-intelligence-v2'
+PROCESSING_VERSION='document-intelligence-v3'
 CLASSIFICATIONS=frozenset({'PUBLIC','PRIVATE','SENSITIVE','HIGHLY_SENSITIVE','DEVICE_CONTROL'})
 STATUS=frozenset({'RECEIVED','VALIDATING','EXTRACTING','STRUCTURING','READY','FAILED','BLOCKED'})
-TEXT_TYPES={'.txt','text/plain'}
+TEXT_TYPES={'.txt','.md','.markdown','text/plain','text/markdown'}
 CSV_TYPES={'.csv','text/csv','application/csv'}
 IMAGE_EXTS={'.png','.jpg','.jpeg','.gif','.webp','.bmp','.tif','.tiff'}
 MAX_CELL_CHARS=4000
@@ -80,7 +80,7 @@ class DocumentIntelligenceService:
         return p
     @staticmethod
     def _media(path:Path):
-        ext=path.suffix.lower();known={'.pdf':'application/pdf','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.csv':'text/csv','.txt':'text/plain'}
+        ext=path.suffix.lower();known={'.pdf':'application/pdf','.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','.pptx':'application/vnd.openxmlformats-officedocument.presentationml.presentation','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.csv':'text/csv','.txt':'text/plain','.md':'text/markdown','.markdown':'text/markdown'}
         return known.get(ext,mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
     @staticmethod
     def _identity(owner,digest):return 'doc_'+hashlib.sha256(f'{owner}\0{digest}\0{PROCESSING_VERSION}'.encode()).hexdigest()[:32]
@@ -125,7 +125,7 @@ class DocumentIntelligenceService:
         except UnsupportedFormat as exc:
             record.status='BLOCKED';record.failure={'category':'UNSUPPORTED_FORMAT','reason':str(exc)};record.updated_at=self._now();record.provenance={'source_digest':digest,'processing_version':PROCESSING_VERSION,'extractor':'none','local_only_extraction':True};self._save(record);return record
         except Exception as exc:
-            record.status='FAILED';record.failure={'category':'EXTRACTION_FAILURE','error_type':type(exc).__name__,'reason':str(exc)[:300]};record.updated_at=self._now();self._save(record);return record
+            record.status='FAILED';record.failure={'category':'EXTRACTION_FAILURE','error_type':type(exc).__name__,'reason':'Document extraction failed; inspect the safe error category.'};record.updated_at=self._now();self._save(record);return record
     def _validate_signature(self,p,media):
         head=p.read_bytes()[:8]
         if media=='application/pdf' and not head.startswith(b'%PDF-'):raise ValueError('malformed PDF signature')
@@ -139,7 +139,7 @@ class DocumentIntelligenceService:
             supported={'image/png':b'\x89PNG\r\n\x1a\n','image/jpeg':b'\xff\xd8\xff','image/gif':b'GIF'}
             if media not in supported:raise ExternalSemanticBlock('image transport is supported but this image media type is not supported by the configured multimodal adapter')
             if not head.startswith(supported[media]):raise ValueError('malformed image signature')
-        if p.suffix.lower() not in {'.pdf','.docx','.pptx','.xlsx','.csv','.txt'} and p.suffix.lower() not in IMAGE_EXTS:raise UnsupportedFormat('unsupported document format')
+        if p.suffix.lower() not in {'.pdf','.docx','.pptx','.xlsx','.csv','.txt','.md','.markdown'} and p.suffix.lower() not in IMAGE_EXTS:raise UnsupportedFormat('unsupported document format')
     def _extract(self,p,media,*,classification='PRIVATE'):
         ext=p.suffix.lower()
         if ext=='.pdf':return self._pdf(p)
@@ -147,7 +147,7 @@ class DocumentIntelligenceService:
         if ext=='.pptx':return self._pptx(p)
         if ext=='.xlsx':return self._xlsx(p)
         if ext=='.csv':return self._csv(p)
-        if ext=='.txt':return self._text(p)
+        if ext in {'.txt','.md','.markdown'}:return self._text(p)
         if ext in IMAGE_EXTS:return self._image(p,media,classification=classification)
         raise UnsupportedFormat('unsupported document format')
     def _image(self,p,media,*,classification):
@@ -242,13 +242,14 @@ class DocumentIntelligenceService:
                 rr=self._zip_xml(z,'xl/_rels/workbook.xml.rels');rels={x.attrib.get('Id'):x.attrib.get('Target') for x in rr}
             for idx,s in enumerate(wb.findall('.//m:sheet',ns),1):
                 if idx>self.max_units:break
-                name=s.attrib.get('name',f'Sheet{idx}');rid=s.attrib.get('{%s}id'%ns['r']);target=rels.get(rid,f'worksheets/sheet{idx}.xml');target='xl/'+target.lstrip('/') if not target.startswith('xl/') else target
+                name=s.attrib.get('name',f'Sheet{idx}');rid=s.attrib.get('{%s}id'%ns['r']);target=rels.get(rid,f'worksheets/sheet{idx}.xml');target=target.lstrip('/') if target.startswith('/') else (target if target.startswith('xl/') else 'xl/'+target)
                 root=self._zip_xml(z,target);rows=[]
                 for row in root.findall('.//m:sheetData/m:row',ns):
                     vals=[]
                     for c in row.findall('./m:c',ns):
                         v=c.find('./m:v',ns);value='' if v is None else (v.text or '')
                         if c.attrib.get('t')=='s' and value.isdigit() and int(value)<len(shared):value=shared[int(value)]
+                        elif c.attrib.get('t')=='inlineStr':value=self._all_text(c)
                         vals.append({'ref':c.attrib.get('r'),'value':value[:MAX_CELL_CHARS]})
                     rows.append({'row':int(row.attrib.get('r',len(rows)+1)),'cells':vals})
                     if len(rows)>=self.max_units:break
